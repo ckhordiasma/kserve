@@ -8,24 +8,40 @@ on:
       - "pkg/controller/**"
       - "config/**"
       - "test/e2e/llmisvc/**"
+      - "kserve-module/**"
       - "!.github/**"
       - "!docs/**"
       - "!**.md"
       - ".github/workflows/e2e-test-odh-xks-kind.yml"
   workflow_dispatch:
 
+permissions: {}
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  build-km-image:
+    uses: ./.github/workflows/build-kserve-module-image.yml
+    with:
+      image-name: kserve-module-controller
+      image-tag: e2e
+      image-pull-policy: Never
+    permissions:
+      contents: read
+
   test-odh-xks-kind:
+    needs: build-km-image
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         istio-version: ["1.27.5", "1.28.3"]
-    name: test-odh-xks-kind (istio-${{ matrix.istio-version }})
+        enable-tls: [true, false]
+    name: test-odh-xks-kind (istio-${{ matrix.istio-version }}, tls-${{ matrix.enable-tls }})
     steps:
       - name: Checkout source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -33,9 +49,18 @@ jobs:
           fetch-depth: 0
 
       - name: Merge target branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          git fetch origin ${{ github.base_ref }}
-          git merge origin/${{ github.base_ref }} --no-edit
+          if [[ ! "$BASE_REF" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+            echo "::error::Invalid base ref: $BASE_REF"
+            exit 1
+          fi
+          git fetch origin -- "$BASE_REF"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git merge --no-edit "origin/$BASE_REF"
 
       - name: Free-up disk space
         uses: ./.github/actions/free-up-disk-space
@@ -87,9 +112,75 @@ jobs:
       - name: Run setup-odh-xks.sh
         env:
           ISTIO_VERSION: ${{ matrix.istio-version }}
+          SKIP_DEPLOY: "true"
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # Script creates KinD cluster, installs deps, builds & loads controller, deploys overlay
           ./test/scripts/kind/setup-odh-xks.sh
+
+      - name: Download kserve-module image
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.build-km-image.outputs.image-name }}
+          path: /tmp
+
+      - name: Load kserve-module image into KinD
+        run: |
+          docker image load -i /tmp/${{ needs.build-km-image.outputs.image-name }}.tar
+          kind load docker-image ${{ needs.build-km-image.outputs.image-name }}:${{ needs.build-km-image.outputs.image-tag }} --name kind
+
+      - name: Deploy kserve-module
+        run: |
+          ./kserve-module/tests/scripts/setup-cluster.sh \
+            --platform xks \
+            --skip-deps \
+            --image ${{ needs.build-km-image.outputs.image-name }}:${{ needs.build-km-image.outputs.image-tag }}
+
+      - name: Inject RELATED_IMAGE env vars
+        env:
+          KSERVE_NAMESPACE: "opendatahub"
+        run: |
+          # Override tokenizer image: KinD has no registry.redhat.io credentials.
+          kubectl set env deployment/kserve-module-controller-manager \
+            RELATED_IMAGE_ODH_KSERVE_LLMISVC_CONTROLLER_IMAGE=local/llmisvc-controller:dev \
+            RELATED_IMAGE_ODH_KSERVE_STORAGE_INITIALIZER_IMAGE=local/storage-initializer:dev \
+            RELATED_IMAGE_RHAII_VLLM_CPU_IMAGE=docker.io/vllm/vllm-openai-cpu:v0.21.0-x86_64@sha256:eb680690f111f2b26316265716218f31ce0a0f83efdcac1821fc6caeed41baea \
+            -n "${KSERVE_NAMESPACE}"
+          kubectl rollout status deployment/kserve-module-controller-manager \
+            -n "${KSERVE_NAMESPACE}" --timeout=120s
+
+      - name: Create Kserve CR and wait for llmisvc
+        env:
+          KSERVE_NAMESPACE: "opendatahub"
+        run: |
+          kubectl apply -f - <<'EOF'
+          apiVersion: components.platform.opendatahub.io/v1alpha1
+          kind: Kserve
+          metadata:
+            name: default-kserve
+          spec:
+            managementState: Managed
+          EOF
+          sleep 5
+          echo "Waiting for Kserve CR to become Ready..."
+          kubectl wait kserve/default-kserve \
+            --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=True \
+            --timeout=300s
+          echo "Waiting for llmisvc-controller-manager deployment..."
+          kubectl wait deployment/llmisvc-controller-manager \
+            -n "${KSERVE_NAMESPACE}" \
+            --for=condition=Available \
+            --timeout=300s
+
+      - name: Disable LLMInferenceService TLS
+        if: ${{ matrix.enable-tls == false }}
+        env:
+          KSERVE_NAMESPACE: "opendatahub"
+        run: |
+          kubectl get configmap inferenceservice-config -n "${KSERVE_NAMESPACE}" -o json \
+            | jq '.data.ingress = (.data.ingress | fromjson | .enableLLMInferenceServiceTLS = false | tojson)' \
+            | kubectl apply -f -
+          kubectl rollout restart deployment/llmisvc-controller-manager -n "${KSERVE_NAMESPACE}"
+          kubectl rollout status deployment/llmisvc-controller-manager -n "${KSERVE_NAMESPACE}" --timeout=120s
 
       - name: Install UV
         run: ./test/scripts/gh-actions/setup-uv.sh
@@ -100,17 +191,46 @@ jobs:
           uv sync --group test
           popd
 
+      - name: Build and load modelcar image
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          mkdir -p /tmp/model-cache && chmod a+rwx /tmp/model-cache
+          docker run --rm \
+            --network host \
+            -v /tmp/model-cache:/mnt/models \
+            -e HF_HUB_DISABLE_PROGRESS_BARS=1 \
+            -e TOKIO_WORKER_THREADS=1 \
+            -e STORAGE_IGNORE_PATTERNS="*.msgpack,*.h5,flax_model*,tf_model*,rust_model*" \
+            ${{ env.HF_TOKEN && format('-e HF_TOKEN={0}', env.HF_TOKEN) }} \
+            local/storage-initializer:dev \
+            hf://facebook/opt-125m /mnt/models
+          printf 'FROM busybox\nCOPY . /models\n' > /tmp/Dockerfile.modelcar
+          docker build -t kserve/opt-125m-modelcar:e2e -f /tmp/Dockerfile.modelcar /tmp/model-cache
+          kind load docker-image kserve/opt-125m-modelcar:e2e --name kind
+
       - name: Run E2E tests
-        timeout-minutes: 40
+        # tls-true (mTLS) adds per-test overhead; the full suite rides right up to the
+        # 90-min wall and times out on the final tls test. 120 gives headroom.
+        timeout-minutes: 120
         env:
           KSERVE_NAMESPACE: "opendatahub"
           SKIP_DELETION_ON_FAILURE: "true"
           TOKEN_AUDIENCES: "https://kubernetes.default.svc"
           GATEWAY_CLASS_NAME: "istio"
           RUN_AS_NON_ROOT: "false"
+          OPT_125M_MODEL_URI: "s3://example-models/facebook/opt-125m"
+          OPT_125M_OCI_MODEL_URI: "oci://kserve/opt-125m-modelcar:e2e"
+          STORAGE_INITIALIZER_IMAGE: "local/storage-initializer:dev"
           INFERENCE_POOL_GROUP: ${{ matrix.istio-version == '1.27.5' && 'inference.networking.x-k8s.io' || 'inference.networking.k8s.io' }}
+          ENABLE_LLM_INFERENCE_SERVICE_TLS: ${{ matrix.enable-tls }}
         run: |
-          ./test/scripts/gh-actions/run-e2e-tests.sh "llminferenceservice and cluster_cpu and not auth and not custom_gateway" 0 "istio-gatewayapi-ext"
+          export PYTEST_MAXFAIL=3
+          MARKER="llminferenceservice and llmisvc_core and cluster_cpu and not auth and not custom_gateway and not tracing"
+          if [ "${ENABLE_LLM_INFERENCE_SERVICE_TLS}" = "false" ]; then
+            MARKER="${MARKER} and not llmd_simulator"
+          fi
+          ./test/scripts/gh-actions/run-e2e-tests.sh "${MARKER}" 0 "istio-gatewayapi-ext"
 
       - name: Check system status
         if: always()
@@ -120,6 +240,9 @@ jobs:
       - name: Collect logs on failure
         if: failure()
         run: |
+          echo "=== Kserve Module Controller logs ==="
+          kubectl logs -n opendatahub -l control-plane=kserve-module-controller-manager --tail=200 2>/dev/null || echo "No km controller logs"
+          echo ""
           echo "=== LLMISVC Controller logs ==="
           kubectl logs -n opendatahub -l control-plane=llmisvc-controller-manager --tail=500 2>/dev/null || echo "No controller logs"
           echo ""

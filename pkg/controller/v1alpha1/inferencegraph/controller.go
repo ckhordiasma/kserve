@@ -269,15 +269,18 @@ func (r *InferenceGraphReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 		}
 
-		routeReconciler := OpenShiftRouteReconciler{
-			Scheme: r.Scheme,
-			Client: r.Client,
-		}
-		hostname, err := routeReconciler.Reconcile(ctx, graph)
-		url.Host = hostname
-		url.Scheme = "https"
-		if err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "fails to reconcile Route for InferenceGraph")
+		routeAvailable, _ := utils.IsCrdAvailable(r.ClientConfig, osv1.GroupVersion.String(), "Route")
+		if routeAvailable {
+			routeReconciler := OpenShiftRouteReconciler{
+				Scheme: r.Scheme,
+				Client: r.Client,
+			}
+			hostname, err := routeReconciler.Reconcile(ctx, graph)
+			url.Host = hostname
+			url.Scheme = "https"
+			if err != nil {
+				return ctrl.Result{}, errors.Wrapf(err, "fails to reconcile Route for InferenceGraph")
+			}
 		}
 
 		logger.Info("Inference graph raw before propagate status")
@@ -301,7 +304,7 @@ func (r *InferenceGraphReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, errors.Wrapf(err, "failed to retrieve the knative autoscaler configuration")
 		}
 
-		knutils.ValidateInitialScaleAnnotation(graph.Annotations, allowZeroInitialScale, graph.Spec.MinReplicas, r.Log)
+		graph.Annotations = knutils.ValidateInitialScaleAnnotationWithReplicas(graph.Annotations, allowZeroInitialScale, graph.Spec.MinReplicas, r.Log)
 
 		desired := createKnativeService(graph.ObjectMeta, graph, routerConfig)
 
@@ -442,10 +445,20 @@ func (r *InferenceGraphReconciler) SetupWithManager(mgr ctrl.Manager, deployConf
 		return err
 	}
 
+	routeFound, err := utils.IsCrdAvailable(r.ClientConfig, osv1.GroupVersion.String(), "Route")
+	if err != nil {
+		return err
+	}
+
 	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.InferenceGraph{}).
-		Owns(&appsv1.Deployment{}).
-		Owns(&osv1.Route{})
+		Owns(&appsv1.Deployment{})
+
+	if routeFound {
+		ctrlBuilder = ctrlBuilder.Owns(&osv1.Route{})
+	} else {
+		r.Log.Info("The InferenceGraph controller won't watch route.openshift.io/v1/Route resources because the CRD is not available.")
+	}
 
 	if ksvcFound {
 		ctrlBuilder = ctrlBuilder.Owns(&knservingv1.Service{})

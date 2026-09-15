@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-import os
 import pytest
 import logging
 from kubernetes import client
@@ -27,7 +26,6 @@ from kubernetes.client import (
     V1Container,
     V1TCPSocketAction,
 )
-from kserve import KServeClient
 from kserve import constants
 from kserve import (
     V1beta1PredictorSpec,
@@ -43,8 +41,6 @@ from ..common.utils import KSERVE_TEST_NAMESPACE
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-kserve_client = KServeClient(config_file=os.environ.get("KUBECONFIG", "~/.kube/config"))
-
 
 def get_deployment(
     k8s_client: client.AppsV1Api, service_name: str
@@ -58,7 +54,7 @@ def get_deployment(
 
 @pytest.mark.kserve_on_openshift
 @pytest.mark.asyncio(scope="session")
-async def test_multi_container_probing(rest_v1_client):
+async def test_multi_container_probing(kserve_client, rest_v1_client):
     service_name = "isvc-sklearn-mcp"
     logger.info("Creating InferenceService %s", service_name)
 
@@ -145,7 +141,7 @@ async def test_multi_container_probing(rest_v1_client):
     kserve_client.wait_isvc_ready(service_name, KSERVE_TEST_NAMESPACE)
 
     # Get the Kubernetes Deployment for RawDeployment mode
-    k8s_client = client.AppsV1Api()
+    k8s_client = kserve_client.app_api
     try:
         for deployment in TimeoutSampler(
             wait_timeout=60,

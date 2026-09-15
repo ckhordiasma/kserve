@@ -18,10 +18,8 @@ package scheme
 
 import (
 	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
-	wvav1alpha1 "github.com/llm-d/llm-d-workload-variant-autoscaler/api/v1alpha1"
 	otelv1beta1 "github.com/open-telemetry/opentelemetry-operator/apis/v1beta1"
 	"github.com/pkg/errors"
-	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	istioclientv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -29,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	resourcev1 "k8s.io/api/resource/v1"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	knservingv1 "knative.dev/serving/pkg/apis/serving/v1"
@@ -41,9 +40,15 @@ import (
 	igwapi "sigs.k8s.io/gateway-api-inference-extension/api/v1"
 	igwapiv1alpha2 "sigs.k8s.io/gateway-api-inference-extension/apix/v1alpha2"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	igwv1alpha2pool "github.com/kserve/kserve/pkg/apis/gie/v1alpha2pool"
 )
 
 type addToSchemeFunc func(scheme *runtime.Scheme) error
+
+// distroSchemes collects distribution-specific scheme registration functions.
+// Populated via init() in build-tagged companion files (register_ocp.go).
+var distroSchemes []addToSchemeFunc
 
 // AddKServeAPIs registers all KServe APIs.
 func AddKServeAPIs(s *runtime.Scheme) error {
@@ -64,6 +69,7 @@ func AddCoreKubernetesAPIs(s *runtime.Scheme) error {
 		autoscalingv2.AddToScheme,
 		apiextv1.AddToScheme,
 		netv1.AddToScheme,
+		resourcev1.AddToScheme,
 	)
 }
 
@@ -73,6 +79,7 @@ func AddGatewayAPIs(s *runtime.Scheme) error {
 		gwapiv1.Install,
 		igwapi.Install,
 		igwapiv1alpha2.Install,
+		igwv1alpha2pool.Install,
 	)
 }
 
@@ -96,20 +103,9 @@ func AddKedaAPIs(s *runtime.Scheme) error {
 	return addAll(s, kedav1alpha1.AddToScheme)
 }
 
-// AddWVAAPIs registers WVA (Workload Variant Autoscaler) APIs.
-func AddWVAAPIs(s *runtime.Scheme) error {
-	return addAll(s, wvav1alpha1.AddToScheme)
-}
-
 // AddOpenTelemetryAPIs registers OpenTelemetry operator APIs.
 func AddOpenTelemetryAPIs(s *runtime.Scheme) error {
 	return addAll(s, otelv1beta1.AddToScheme)
-}
-
-// AddMonitoringAPIs registers Prometheus Operator monitoring APIs (PodMonitor, ServiceMonitor).
-// The scheme registration is unconditional; actual CRD availability is checked at watch setup time.
-func AddMonitoringAPIs(s *runtime.Scheme) error {
-	return addAll(s, monitoringv1.AddToScheme)
 }
 
 // AddControllerAPIs registers the baseline controller APIs used by production and tests.
@@ -122,29 +118,30 @@ func AddControllerAPIs(s *runtime.Scheme) error {
 
 // AddLLMISVCAPIs registers API groups required by the llmisvc manager.
 func AddLLMISVCAPIs(s *runtime.Scheme) error {
-	return addAll(s,
+	return addAll(s, append([]addToSchemeFunc{
 		AddControllerAPIs,
 		AddGatewayAPIs,
 		AddLeaderWorkerSetAPIs,
-		AddMonitoringAPIs,
 		AddKedaAPIs,
-		AddWVAAPIs,
-	)
+	}, distroSchemes...)...)
+}
+
+// AddDistroAPIs registers distribution-specific APIs (OpenShift config, monitoring, etc.).
+func AddDistroAPIs(s *runtime.Scheme) error {
+	return addAll(s, distroSchemes...)
 }
 
 // AddAll registers all API groups supported by KServe managers and envtest suites.
 func AddAll(s *runtime.Scheme) error {
-	return addAll(s,
+	return addAll(s, append([]addToSchemeFunc{
 		AddControllerAPIs,
 		AddGatewayAPIs,
 		AddLeaderWorkerSetAPIs,
 		AddKnativeAPIs,
 		AddIstioAPIs,
 		AddKedaAPIs,
-		AddWVAAPIs,
 		AddOpenTelemetryAPIs,
-		AddMonitoringAPIs,
-	)
+	}, distroSchemes...)...)
 }
 
 func addAll(s *runtime.Scheme, fns ...addToSchemeFunc) error {

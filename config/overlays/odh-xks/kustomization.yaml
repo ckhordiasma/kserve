@@ -5,6 +5,7 @@ kind: Kustomization
 namespace: opendatahub
 
 resources:
+- ../odh-crds
 - ../odh
 - cert-manager/
 
@@ -54,6 +55,15 @@ patches:
 # Restore cert-manager.io/inject-ca-from annotations on webhooks
 # (reverse ODH's inline patches that added OCP annotations)
 - target:
+    kind: MutatingWebhookConfiguration
+    name: llminferenceservice.serving.kserve.io
+  patch: |
+    - op: remove
+      path: /metadata/annotations/service.beta.openshift.io~1inject-cabundle
+    - op: add
+      path: /metadata/annotations/cert-manager.io~1inject-ca-from
+      value: "$(NAMESPACE)/llmisvc-webhook-server"
+- target:
     kind: ValidatingWebhookConfiguration
     name: llminferenceservice.serving.kserve.io
   patch: |
@@ -77,7 +87,6 @@ configMapGenerator:
 - envs:
   - params.env
   name: odh-xks-kserve-parameters
-
 generatorOptions:
   disableNameSuffixHash: true
 
@@ -136,3 +145,19 @@ vars:
 # Configuration for var substitution paths
 configurations:
 - params.yaml
+
+# Replace REPLACE_IMAGE placeholders with real images from the base ODH overlay's
+# kserve-parameters ConfigMap (generated from config/overlays/odh/params.env).
+# The odh-xks storageInitializer patch overrides the entire ConfigMap string value
+# (kustomize strategic merge), so the base ODH replacement no longer applies.
+replacements:
+- source:
+    kind: ConfigMap
+    name: kserve-parameters
+    fieldPath: data.kserve-storage-initializer
+  targets:
+  - select:
+      kind: ConfigMap
+      name: inferenceservice-config
+    fieldPaths:
+    - data.storageInitializer.image

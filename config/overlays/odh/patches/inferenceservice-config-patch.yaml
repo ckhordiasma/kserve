@@ -158,5 +158,7 @@ data:
     }
   openshiftConfig: |-
     {
-      "modelcachePermissionFixImage": "REPLACE_IMAGE"
+      "modelcachePermissionFixImage": "REPLACE_IMAGE",
+      "ovmsVersioningImage": "REPLACE_IMAGE",
+      "enableAuditLogging": false
     }
