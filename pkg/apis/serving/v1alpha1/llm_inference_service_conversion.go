@@ -23,7 +23,8 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/conversion"
 	igwapiv1 "sigs.k8s.io/gateway-api-inference-extension/api/v1"
-	igwapiv1alpha2 "sigs.k8s.io/gateway-api-inference-extension/apix/v1alpha2"
+
+	igwapiv1alpha2 "github.com/kserve/kserve/pkg/apis/gie/v1alpha2pool"
 
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 )
@@ -56,9 +57,14 @@ func (src *LLMInferenceService) ConvertTo(dstRaw conversion.Hub) error {
 
 	// Status conversion
 	dst.Status = v1alpha2.LLMInferenceServiceStatus{
-		URL:           src.Status.URL,
-		Status:        src.Status.Status,
-		AddressStatus: src.Status.AddressStatus,
+		URL:     src.Status.URL,
+		Status:  src.Status.Status,
+		Address: src.Status.Address,
+	}
+	for _, addr := range src.Status.Addresses {
+		dst.Status.Addresses = append(dst.Status.Addresses, v1alpha2.SourcedAddress{
+			Addressable: addr,
+		})
 	}
 
 	return nil
@@ -77,11 +83,15 @@ func (dst *LLMInferenceService) ConvertFrom(srcRaw conversion.Hub) error {
 	// Restore criticality values from annotations
 	restoreCriticalityFromAnnotations(&dst.ObjectMeta, &dst.Spec.Model)
 
-	// Status conversion
+	// Status conversion - Origin is lost on this path (v1alpha1 doesn't have it),
+	// but status is controller-produced and gets re-populated on next reconcile.
 	dst.Status = LLMInferenceServiceStatus{
-		URL:           src.Status.URL,
-		Status:        src.Status.Status,
-		AddressStatus: src.Status.AddressStatus,
+		URL:    src.Status.URL,
+		Status: src.Status.Status,
+	}
+	dst.Status.Address = src.Status.Address //nolint:staticcheck // retained for schema compatibility
+	for _, sa := range src.Status.Addresses {
+		dst.Status.Addresses = append(dst.Status.Addresses, sa.Addressable)
 	}
 
 	return nil
@@ -100,6 +110,11 @@ func (src *LLMInferenceServiceConfig) ConvertTo(dstRaw conversion.Hub) error {
 	// Spec conversion
 	dst.Spec = convertSpecToV1Alpha2(&src.Spec)
 
+	// Status conversion (controller-managed, only duckv1.Status)
+	dst.Status = v1alpha2.LLMInferenceServiceConfigStatus{
+		Status: src.Status.Status,
+	}
+
 	return nil
 }
 
@@ -112,6 +127,12 @@ func (dst *LLMInferenceServiceConfig) ConvertFrom(srcRaw conversion.Hub) error {
 
 	// Spec conversion
 	dst.Spec = convertSpecFromV1Alpha2(&src.Spec)
+
+	// ReferencedBy is intentionally not converted: v1alpha1 has no equivalent field,
+	// and the controller re-populates it on the next reconciliation of the hub type.
+	dst.Status = LLMInferenceServiceConfigStatus{
+		Status: src.Status.Status,
+	}
 
 	// Restore criticality values from annotations
 	restoreCriticalityFromAnnotations(&dst.ObjectMeta, &dst.Spec.Model)
@@ -146,6 +167,16 @@ func convertSpecToV1Alpha2(src *LLMInferenceServiceSpec) v1alpha2.LLMInferenceSe
 		dst.Prefill = &prefill
 	}
 
+	// Tracing
+	if src.Tracing != nil {
+		dst.Tracing = &v1alpha2.TracingSpec{
+			ExporterEndpoint: src.Tracing.ExporterEndpoint,
+			Sampler:          src.Tracing.Sampler,
+			SamplerArg:       src.Tracing.SamplerArg,
+			Exporter:         src.Tracing.Exporter,
+		}
+	}
+
 	return dst
 }
 
@@ -176,6 +207,16 @@ func convertSpecFromV1Alpha2(src *v1alpha2.LLMInferenceServiceSpec) LLMInference
 		dst.Prefill = &prefill
 	}
 
+	// Tracing
+	if src.Tracing != nil {
+		dst.Tracing = &TracingSpec{
+			ExporterEndpoint: src.Tracing.ExporterEndpoint,
+			Sampler:          src.Tracing.Sampler,
+			SamplerArg:       src.Tracing.SamplerArg,
+			Exporter:         src.Tracing.Exporter,
+		}
+	}
+
 	return dst
 }
 
@@ -199,15 +240,12 @@ func convertScalingSpecToV1Alpha2(src *ScalingSpec) *v1alpha2.ScalingSpec {
 			}
 		}
 		if src.WVA.KEDA != nil {
-			dst.WVA.KEDA = &v1alpha2.KEDAScalingSpec{
-				PollingInterval:       src.WVA.KEDA.PollingInterval,
-				CooldownPeriod:        src.WVA.KEDA.CooldownPeriod,
-				InitialCooldownPeriod: src.WVA.KEDA.InitialCooldownPeriod,
-				IdleReplicaCount:      src.WVA.KEDA.IdleReplicaCount,
-				Fallback:              src.WVA.KEDA.Fallback,
-				Advanced:              src.WVA.KEDA.Advanced,
-			}
+			dst.WVA.KEDA = convertKEDAScalingSpecToV1Alpha2(src.WVA.KEDA)
 		}
+	}
+
+	if src.KEDA != nil {
+		dst.KEDA = convertDirectKEDAScalingSpecToV1Alpha2(src.KEDA)
 	}
 
 	return dst
@@ -233,18 +271,63 @@ func convertScalingSpecFromV1Alpha2(src *v1alpha2.ScalingSpec) *ScalingSpec {
 			}
 		}
 		if src.WVA.KEDA != nil {
-			dst.WVA.KEDA = &KEDAScalingSpec{
-				PollingInterval:       src.WVA.KEDA.PollingInterval,
-				CooldownPeriod:        src.WVA.KEDA.CooldownPeriod,
-				InitialCooldownPeriod: src.WVA.KEDA.InitialCooldownPeriod,
-				IdleReplicaCount:      src.WVA.KEDA.IdleReplicaCount,
-				Fallback:              src.WVA.KEDA.Fallback,
-				Advanced:              src.WVA.KEDA.Advanced,
-			}
+			dst.WVA.KEDA = convertKEDAScalingSpecFromV1Alpha2(src.WVA.KEDA)
 		}
 	}
 
+	if src.KEDA != nil {
+		dst.KEDA = convertDirectKEDAScalingSpecFromV1Alpha2(src.KEDA)
+	}
+
 	return dst
+}
+
+func convertKEDAScalingSpecToV1Alpha2(src *KEDAScalingSpec) *v1alpha2.KEDAScalingSpec {
+	if src == nil {
+		return nil
+	}
+	return &v1alpha2.KEDAScalingSpec{
+		PollingInterval:       src.PollingInterval,
+		CooldownPeriod:        src.CooldownPeriod,
+		InitialCooldownPeriod: src.InitialCooldownPeriod,
+		IdleReplicaCount:      src.IdleReplicaCount,
+		Fallback:              src.Fallback,
+		Advanced:              src.Advanced,
+	}
+}
+
+func convertKEDAScalingSpecFromV1Alpha2(src *v1alpha2.KEDAScalingSpec) *KEDAScalingSpec {
+	if src == nil {
+		return nil
+	}
+	return &KEDAScalingSpec{
+		PollingInterval:       src.PollingInterval,
+		CooldownPeriod:        src.CooldownPeriod,
+		InitialCooldownPeriod: src.InitialCooldownPeriod,
+		IdleReplicaCount:      src.IdleReplicaCount,
+		Fallback:              src.Fallback,
+		Advanced:              src.Advanced,
+	}
+}
+
+func convertDirectKEDAScalingSpecToV1Alpha2(src *DirectKEDAScalingSpec) *v1alpha2.DirectKEDAScalingSpec {
+	if src == nil {
+		return nil
+	}
+	return &v1alpha2.DirectKEDAScalingSpec{
+		KEDAScalingSpec: *convertKEDAScalingSpecToV1Alpha2(&src.KEDAScalingSpec),
+		Triggers:        src.Triggers,
+	}
+}
+
+func convertDirectKEDAScalingSpecFromV1Alpha2(src *v1alpha2.DirectKEDAScalingSpec) *DirectKEDAScalingSpec {
+	if src == nil {
+		return nil
+	}
+	return &DirectKEDAScalingSpec{
+		KEDAScalingSpec: *convertKEDAScalingSpecFromV1Alpha2(&src.KEDAScalingSpec),
+		Triggers:        src.Triggers,
+	}
 }
 
 func convertModelSpecToV1Alpha2(src *LLMModelSpec) v1alpha2.LLMModelSpec {
@@ -280,7 +363,11 @@ func convertLoRASpecToV1Alpha2(src *LoRASpec) *v1alpha2.LoRASpec {
 		return nil
 	}
 
-	dst := &v1alpha2.LoRASpec{}
+	dst := &v1alpha2.LoRASpec{
+		MaxRank:        src.MaxRank,
+		MaxAdapters:    src.MaxAdapters,
+		MaxCpuAdapters: src.MaxCpuAdapters,
+	}
 	for _, adapter := range src.Adapters {
 		dst.Adapters = append(dst.Adapters, convertModelSpecToV1Alpha2(&adapter))
 	}
@@ -293,7 +380,11 @@ func convertLoRASpecFromV1Alpha2(src *v1alpha2.LoRASpec) *LoRASpec {
 		return nil
 	}
 
-	dst := &LoRASpec{}
+	dst := &LoRASpec{
+		MaxRank:        src.MaxRank,
+		MaxAdapters:    src.MaxAdapters,
+		MaxCpuAdapters: src.MaxCpuAdapters,
+	}
 	for _, adapter := range src.Adapters {
 		dst.Adapters = append(dst.Adapters, convertModelSpecFromV1Alpha2(&adapter))
 	}
@@ -325,6 +416,13 @@ func convertWorkloadSpecToV1Alpha2(src *WorkloadSpec) v1alpha2.WorkloadSpec {
 		dst.Scaling = convertScalingSpecToV1Alpha2(src.Scaling)
 	}
 
+	if src.RolloutStrategy != nil {
+		dst.RolloutStrategy = &v1alpha2.RolloutStrategy{
+			MaxUnavailable: src.RolloutStrategy.MaxUnavailable,
+			MaxSurge:       src.RolloutStrategy.MaxSurge,
+		}
+	}
+
 	return dst
 }
 
@@ -352,6 +450,13 @@ func convertWorkloadSpecFromV1Alpha2(src *v1alpha2.WorkloadSpec) WorkloadSpec {
 		dst.Scaling = convertScalingSpecFromV1Alpha2(src.Scaling)
 	}
 
+	if src.RolloutStrategy != nil {
+		dst.RolloutStrategy = &RolloutStrategy{
+			MaxUnavailable: src.RolloutStrategy.MaxUnavailable,
+			MaxSurge:       src.RolloutStrategy.MaxSurge,
+		}
+	}
+
 	return dst
 }
 
@@ -370,14 +475,19 @@ func convertRouterSpecToV1Alpha2(src *RouterSpec) *v1alpha2.RouterSpec {
 				Spec: src.Route.HTTP.Spec,
 			}
 		}
+		dst.Route.Group = src.Route.Group
+		dst.Route.Weight = src.Route.Weight
 	}
 
 	if src.Gateway != nil {
 		dst.Gateway = &v1alpha2.GatewaySpec{}
 		for _, ref := range src.Gateway.Refs {
-			dst.Gateway.Refs = append(dst.Gateway.Refs, v1alpha2.UntypedObjectReference{
-				Name:      ref.Name,
-				Namespace: ref.Namespace,
+			dst.Gateway.Refs = append(dst.Gateway.Refs, v1alpha2.GatewayObjectReference{
+				UntypedObjectReference: v1alpha2.UntypedObjectReference{
+					Name:      ref.Name,
+					Namespace: ref.Namespace,
+				},
+				SectionName: ref.SectionName,
 			})
 		}
 	}
@@ -409,6 +519,11 @@ func convertRouterSpecToV1Alpha2(src *RouterSpec) *v1alpha2.RouterSpec {
 			dst.Scheduler.Config = &v1alpha2.SchedulerConfigSpec{
 				Inline: src.Scheduler.Config.Inline,
 				Ref:    src.Scheduler.Config.Ref,
+			}
+		}
+		if src.Scheduler.Tokenizer != nil {
+			dst.Scheduler.Tokenizer = &v1alpha2.TokenizerSpec{
+				Template: src.Scheduler.Tokenizer.Template,
 			}
 		}
 	}
@@ -459,14 +574,19 @@ func convertRouterSpecFromV1Alpha2(src *v1alpha2.RouterSpec) *RouterSpec {
 				Spec: src.Route.HTTP.Spec,
 			}
 		}
+		dst.Route.Group = src.Route.Group
+		dst.Route.Weight = src.Route.Weight
 	}
 
 	if src.Gateway != nil {
 		dst.Gateway = &GatewaySpec{}
 		for _, ref := range src.Gateway.Refs {
-			dst.Gateway.Refs = append(dst.Gateway.Refs, UntypedObjectReference{
-				Name:      ref.Name,
-				Namespace: ref.Namespace,
+			dst.Gateway.Refs = append(dst.Gateway.Refs, GatewayObjectReference{
+				UntypedObjectReference: UntypedObjectReference{
+					Name:      ref.Name,
+					Namespace: ref.Namespace,
+				},
+				SectionName: ref.SectionName,
 			})
 		}
 	}
@@ -498,6 +618,11 @@ func convertRouterSpecFromV1Alpha2(src *v1alpha2.RouterSpec) *RouterSpec {
 			dst.Scheduler.Config = &SchedulerConfigSpec{
 				Inline: src.Scheduler.Config.Inline,
 				Ref:    src.Scheduler.Config.Ref,
+			}
+		}
+		if src.Scheduler.Tokenizer != nil {
+			dst.Scheduler.Tokenizer = &TokenizerSpec{
+				Template: src.Scheduler.Tokenizer.Template,
 			}
 		}
 	}

@@ -22,6 +22,7 @@ import (
 
 	"github.com/kserve/kserve/pkg/utils"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -29,8 +30,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
+	"github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	"github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	"github.com/kserve/kserve/pkg/constants"
+	"github.com/kserve/kserve/pkg/localmodelcache"
 )
 
 // logger for the validation webhook.
@@ -73,6 +76,9 @@ func (v *LocalModelNamespaceCacheValidator) ValidateUpdate(ctx context.Context, 
 		localModelNamespaceCacheValidatorLogger.Error(err, "Unable to convert object to LocalModelNamespaceCache")
 		return nil, err
 	}
+	if localModelNamespaceCache.GetDeletionTimestamp() != nil {
+		return nil, nil
+	}
 	localModelNamespaceCacheValidatorLogger.Info("validate update", "name", localModelNamespaceCache.Name, "namespace", localModelNamespaceCache.Namespace)
 
 	if err := v.validateNodeGroups(ctx, localModelNamespaceCache); err != nil {
@@ -91,10 +97,16 @@ func (v *LocalModelNamespaceCacheValidator) ValidateDelete(ctx context.Context, 
 	}
 	localModelNamespaceCacheValidatorLogger.Info("validate delete", "name", localModelNamespaceCache.Name, "namespace", localModelNamespaceCache.Namespace)
 
-	// Check if current LocalModelNamespaceCache is being used by InferenceServices in the same namespace
+	// Delete protection relies on Status.InferenceServices / Status.LLMInferenceServices
+	// being up-to-date. A newly created consumer may not appear in status yet if the
+	// reconciler has not run, so deletion can race and succeed until the next reconcile.
+	// This gap already existed for base-model references; LoRA adapter references inherit it.
 	for _, isvcMeta := range localModelNamespaceCache.Status.InferenceServices {
 		isvc := v1beta1.InferenceService{}
 		if err := v.Get(ctx, client.ObjectKey(isvcMeta), &isvc); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
 			localModelNamespaceCacheValidatorLogger.Error(err, "Error getting InferenceService", "name", isvcMeta.Name, "namespace", isvcMeta.Namespace)
 			return nil, err
 		}
@@ -106,6 +118,28 @@ func (v *LocalModelNamespaceCacheValidator) ValidateDelete(ctx context.Context, 
 		if modelName == localModelNamespaceCache.Name && modelNamespace == localModelNamespaceCache.Namespace {
 			return admission.Warnings{}, fmt.Errorf("LocalModelNamespaceCache %s/%s is being used by InferenceService %s/%s",
 				localModelNamespaceCache.Namespace, localModelNamespaceCache.Name, isvcMeta.Namespace, isvcMeta.Name)
+		}
+	}
+
+	// Check if current LocalModelNamespaceCache is being used by LLMInferenceServices in the same namespace
+	for _, llmIsvcMeta := range localModelNamespaceCache.Status.LLMInferenceServices {
+		llmIsvc := v1alpha2.LLMInferenceService{}
+		if err := v.Get(ctx, client.ObjectKey(llmIsvcMeta), &llmIsvc); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			localModelNamespaceCacheValidatorLogger.Error(err, "Error getting LLMInferenceService", "name", llmIsvcMeta.Name, "namespace", llmIsvcMeta.Namespace)
+			return nil, err
+		}
+		if localmodelcache.LLMISVCReferencesNamespaceCache(
+			localModelNamespaceCache.Name,
+			localModelNamespaceCache.Namespace,
+			llmIsvc.Namespace,
+			llmIsvc.Labels,
+			llmIsvc.Annotations,
+		) {
+			return admission.Warnings{}, fmt.Errorf("LocalModelNamespaceCache %s/%s is being used by LLMInferenceService %s/%s",
+				localModelNamespaceCache.Namespace, localModelNamespaceCache.Name, llmIsvcMeta.Namespace, llmIsvcMeta.Name)
 		}
 	}
 	return nil, nil

@@ -18,8 +18,10 @@ package utils
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/onsi/gomega/types"
 	"k8s.io/utils/ptr"
@@ -924,6 +926,119 @@ func TestMergePodSpec(t *testing.T) {
 				SchedulerName: "isvc-scheduler",
 			},
 		},
+		"RuntimeOnlyResourceClaims": {
+			podSpecBase: &v1alpha1.ServingRuntimePodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:              "gpu-resource",
+						ResourceClaimName: ptr.To("gpu-l4-claim"),
+					},
+				},
+			},
+			podSpecOverride: &PodSpec{},
+			expected: &corev1.PodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:              "gpu-resource",
+						ResourceClaimName: ptr.To("gpu-l4-claim"),
+					},
+				},
+			},
+		},
+		"RuntimeOnlyResourceClaimTemplate": {
+			podSpecBase: &v1alpha1.ServingRuntimePodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:                      "gpu-resource",
+						ResourceClaimTemplateName: ptr.To("gpu-claim-template"),
+					},
+				},
+			},
+			podSpecOverride: &PodSpec{},
+			expected: &corev1.PodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:                      "gpu-resource",
+						ResourceClaimTemplateName: ptr.To("gpu-claim-template"),
+					},
+				},
+			},
+		},
+		"IsvcOnlyResourceClaims": {
+			podSpecBase: &v1alpha1.ServingRuntimePodSpec{},
+			podSpecOverride: &PodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:              "gpu-hardware",
+						ResourceClaimName: ptr.To("gpu-l4-claim"),
+					},
+				},
+			},
+			expected: &corev1.PodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:              "gpu-hardware",
+						ResourceClaimName: ptr.To("gpu-l4-claim"),
+					},
+				},
+			},
+		},
+		"BothDistinctResourceClaims": {
+			podSpecBase: &v1alpha1.ServingRuntimePodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:              "gpu-a",
+						ResourceClaimName: ptr.To("claim-a"),
+					},
+				},
+			},
+			podSpecOverride: &PodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:              "gpu-b",
+						ResourceClaimName: ptr.To("claim-b"),
+					},
+				},
+			},
+			expected: &corev1.PodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:              "gpu-b",
+						ResourceClaimName: ptr.To("claim-b"),
+					},
+					{
+						Name:              "gpu-a",
+						ResourceClaimName: ptr.To("claim-a"),
+					},
+				},
+			},
+		},
+		"OverrideSameNameResourceClaims": {
+			podSpecBase: &v1alpha1.ServingRuntimePodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:              "gpu",
+						ResourceClaimName: ptr.To("runtime-claim"),
+					},
+				},
+			},
+			podSpecOverride: &PodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:              "gpu",
+						ResourceClaimName: ptr.To("isvc-claim"),
+					},
+				},
+			},
+			expected: &corev1.PodSpec{
+				ResourceClaims: []corev1.PodResourceClaim{
+					{
+						Name:              "gpu",
+						ResourceClaimName: ptr.To("isvc-claim"),
+					},
+				},
+			},
+		},
 	}
 
 	for name, scenario := range scenarios {
@@ -993,16 +1108,16 @@ func TestGetServingRuntime(t *testing.T) {
 		},
 	}
 
-	// clusterRuntimes := &v1alpha1.ClusterServingRuntimeList{
-	//	Items: []v1alpha1.ClusterServingRuntime{
-	//		{
-	//			ObjectMeta: metav1.ObjectMeta{
-	//				Name: sklearnRuntime,
-	//			},
-	//			Spec: servingRuntimeSpecs[sklearnRuntime],
-	//		},
-	//	},
-	//}
+	clusterRuntimes := &v1alpha1.ClusterServingRuntimeList{
+		Items: []v1alpha1.ClusterServingRuntime{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: sklearnRuntime,
+				},
+				Spec: servingRuntimeSpecs[sklearnRuntime],
+			},
+		},
+	}
 
 	scenarios := map[string]struct {
 		runtimeName string
@@ -1012,21 +1127,27 @@ func TestGetServingRuntime(t *testing.T) {
 			runtimeName: tfRuntime,
 			expected:    servingRuntimeSpecs[tfRuntime],
 		},
-		// "ClusterServingRuntime": {
-		//	runtimeName: sklearnRuntime,
-		//	expected:    servingRuntimeSpecs[sklearnRuntime],
-		// },
+		"ClusterServingRuntime": {
+			runtimeName: sklearnRuntime,
+			expected:    servingRuntimeSpecs[sklearnRuntime],
+		},
 	}
 
 	s := runtime.NewScheme()
 	_ = v1alpha1.AddToScheme(s)
 
-	mockClient := fake.NewClientBuilder().WithLists(runtimes /*, clusterRuntimes*/).WithScheme(s).Build()
+	mockClient := fake.NewClientBuilder().WithLists(runtimes, clusterRuntimes).WithScheme(s).Build()
 	for name, scenario := range scenarios {
 		t.Run(name, func(t *testing.T) {
-			res, _, _, _ := GetServingRuntime(t.Context(), mockClient, scenario.runtimeName, namespace)
+			res, _, _, isClusterServingRuntime := GetServingRuntime(t.Context(), mockClient, scenario.runtimeName, namespace)
 			if !g.Expect(res).To(gomega.Equal(&scenario.expected)) {
 				t.Errorf("got %v, want %v", res, &scenario.expected)
+			}
+			// Check if the returned runtime is a cluster serving runtime
+			if name == "ClusterServingRuntime" {
+				g.Expect(isClusterServingRuntime).To(gomega.BeTrue())
+			} else {
+				g.Expect(isClusterServingRuntime).To(gomega.BeFalse())
 			}
 		})
 	}
@@ -1037,7 +1158,7 @@ func TestGetServingRuntime(t *testing.T) {
 		if !g.Expect(res).To(gomega.BeNil()) {
 			t.Errorf("got %v, want %v", res, nil)
 		}
-		g.Expect(err.Error()).To(gomega.ContainSubstring("No ServingRuntimes with the name"))
+		g.Expect(err.Error()).To(gomega.ContainSubstring("No ServingRuntimes or ClusterServingRuntimes with the name"))
 	})
 }
 
@@ -1118,11 +1239,12 @@ func TestUpdateImageTag(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 
 	scenarios := map[string]struct {
-		container      *corev1.Container
-		runtimeVersion *string
-		servingRuntime string
-		isvcConfig     *InferenceServicesConfig
-		expected       string
+		container          *corev1.Container
+		runtimeVersion     *string
+		servingRuntime     string
+		runtimeAnnotations map[string]string
+		isvcConfig         *InferenceServicesConfig
+		expected           string
 	}{
 		"UpdateRuntimeVersion": {
 			container: &corev1.Container{
@@ -1296,10 +1418,171 @@ func TestUpdateImageTag(t *testing.T) {
 			servingRuntime: constants.TFServing,
 			expected:       "huggingfaceserver@sha256:abcdef1234567890",
 		},
+		"VLLMServerGPUKeepsDefaultImage": {
+			container: &corev1.Container{
+				Name:  "kserve-container",
+				Image: "vllm/vllm-openai:latest",
+				Resources: corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{
+						"nvidia.com/gpu": resource.MustParse("1"),
+					},
+				},
+			},
+			runtimeVersion: nil,
+			servingRuntime: constants.VLLMServer,
+			expected:       "vllm/vllm-openai:latest",
+		},
+		"VLLMServerCPURewritesImageName": {
+			container: &corev1.Container{
+				Name:  "kserve-container",
+				Image: "vllm/vllm-openai:latest",
+				Resources: corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("2"),
+						corev1.ResourceMemory: resource.MustParse("4Gi"),
+					},
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
+			},
+			runtimeVersion: nil,
+			servingRuntime: constants.VLLMServer,
+			expected:       "vllm/vllm-openai-cpu:latest",
+		},
+		"VLLMServerCPUWithProxyRewritesImageName": {
+			container: &corev1.Container{
+				Name:  "kserve-container",
+				Image: "localhost:8888/vllm/vllm-openai:v0.5.0",
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
+			},
+			runtimeVersion: nil,
+			servingRuntime: constants.VLLMServer,
+			expected:       "localhost:8888/vllm/vllm-openai-cpu:v0.5.0",
+		},
+		"VLLMServerCPUSkipsWhenImageNameAlreadyCpu": {
+			container: &corev1.Container{
+				Name:  "kserve-container",
+				Image: "vllm/vllm-openai-cpu:v0.5.0",
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
+			},
+			runtimeVersion: nil,
+			servingRuntime: constants.VLLMServer,
+			expected:       "vllm/vllm-openai-cpu:v0.5.0",
+		},
+		"VLLMServerCPUSkipsWhenImageHasNoTag": {
+			container: &corev1.Container{
+				Name:  "kserve-container",
+				Image: "vllm/vllm-openai",
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
+			},
+			runtimeVersion: nil,
+			servingRuntime: constants.VLLMServer,
+			expected:       "vllm/vllm-openai",
+		},
+		"VLLMServerRuntimeVersionTakesPrecedence": {
+			container: &corev1.Container{
+				Name:  "kserve-container",
+				Image: "vllm/vllm-openai:latest",
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
+			},
+			runtimeVersion: proto.String("v0.5.0"),
+			servingRuntime: constants.VLLMServer,
+			expected:       "vllm/vllm-openai:v0.5.0",
+		},
+		"VLLMServerCPURewriteViaAnnotationForCustomRuntime": {
+			container: &corev1.Container{
+				Name:  "kserve-container",
+				Image: "vllm/vllm-openai:latest",
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
+			},
+			runtimeVersion: nil,
+			servingRuntime: "my-custom-vllm",
+			runtimeAnnotations: map[string]string{
+				constants.ServerTypeAnnotationKey: constants.ServerTypeVLLMServer,
+			},
+			expected: "vllm/vllm-openai-cpu:latest",
+		},
+		"VLLMServerAnnotationTakesPrecedenceOverRuntimeName": {
+			container: &corev1.Container{
+				Name:  "kserve-container",
+				Image: "vllm/vllm-openai:latest",
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
+			},
+			runtimeVersion: nil,
+			servingRuntime: constants.MLServer,
+			runtimeAnnotations: map[string]string{
+				constants.ServerTypeAnnotationKey: constants.ServerTypeVLLMServer,
+			},
+			expected: "vllm/vllm-openai-cpu:latest",
+		},
+		"HuggingFaceServerGPUViaAnnotationForCustomRuntime": {
+			container: &corev1.Container{
+				Name:  "kserve-container",
+				Image: "huggingfaceserver:1.14.0",
+				Resources: corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{
+						"nvidia.com/gpu": resource.MustParse("1"),
+					},
+				},
+			},
+			runtimeVersion: nil,
+			servingRuntime: "my-custom-hf",
+			runtimeAnnotations: map[string]string{
+				constants.ServerTypeAnnotationKey: constants.ServerTypeHuggingFaceServer,
+			},
+			expected: "huggingfaceserver:1.14.0-gpu",
+		},
+		"UnknownRuntimeWithoutAnnotationIsLeftAlone": {
+			container: &corev1.Container{
+				Name:  "kserve-container",
+				Image: "vllm/vllm-openai:latest",
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("1"),
+						corev1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
+			},
+			runtimeVersion: nil,
+			servingRuntime: "my-custom-vllm",
+			expected:       "vllm/vllm-openai:latest",
+		},
 	}
 	for name, scenario := range scenarios {
 		t.Run(name, func(t *testing.T) {
-			UpdateImageTag(scenario.container, scenario.runtimeVersion, &scenario.servingRuntime)
+			UpdateImageTag(scenario.container, scenario.runtimeVersion, &scenario.servingRuntime, scenario.runtimeAnnotations)
 			if !g.Expect(scenario.container.Image).To(gomega.Equal(scenario.expected)) {
 				t.Errorf("got %v, want %v", scenario.container.Image, scenario.expected)
 			}
@@ -2004,6 +2287,8 @@ func TestValidateStorageURIForDefaultStorageInitializer(t *testing.T) {
 		"http://raw.githubusercontent.com/someOrg/someRepo/model.tar.gz",
 		"hdfs://",
 		"webhdfs://",
+		"oci+native://ghcr.io/kserve/oci-native-test-fixture:v1",
+		"oci+fetch://ghcr.io/kserve/oci-fetch-test-fixture:v1",
 		"some/relative/path",
 		"/",
 		"foo",
@@ -2433,6 +2718,45 @@ func TestMergeServingRuntimeAndInferenceServiceSpecs(t *testing.T) {
 				g.Expect(index).NotTo(gomega.Equal(-1))
 				g.Expect(err).To(scenario.expectedErr)
 			}
+		})
+	}
+}
+
+func TestSortPodsByCreatedTimestampDescIsDeterministic(t *testing.T) {
+	// CreationTimestamp is serialized as RFC3339, so replicas of the same
+	// ReplicaSet share it to the second. The cache lists pods in random map
+	// order, so an unstable sort with a timestamp-only comparator would hand
+	// callers a different Items[0] on every reconcile.
+	sameSecond := metav1.NewTime(time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC))
+	older := metav1.NewTime(sameSecond.Add(-time.Minute))
+
+	pods := []corev1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Name: "predictor-xyz-1", CreationTimestamp: sameSecond}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "predictor-xyz-2", CreationTimestamp: sameSecond}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "predictor-xyz-3", CreationTimestamp: sameSecond}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "predictor-abc-0", CreationTimestamp: older}},
+	}
+
+	// Feeding the same set in two opposite orders is enough: a comparator that
+	// leaves ties unordered carries the input order through to the output, so
+	// the two runs disagree. Fixed inputs keep a CI failure reproducible.
+	reversed := slices.Clone(pods)
+	slices.Reverse(reversed)
+
+	for name, input := range map[string][]corev1.Pod{"forward": pods, "reversed": reversed} {
+		t.Run(name, func(t *testing.T) {
+			g := gomega.NewGomegaWithT(t)
+			list := &corev1.PodList{Items: slices.Clone(input)}
+
+			sortPodsByCreatedTimestampDesc(list)
+
+			names := make([]string, 0, len(list.Items))
+			for _, p := range list.Items {
+				names = append(names, p.Name)
+			}
+			g.Expect(names).To(gomega.Equal([]string{
+				"predictor-xyz-1", "predictor-xyz-2", "predictor-xyz-3", "predictor-abc-0",
+			}))
 		})
 	}
 }

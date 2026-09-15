@@ -72,6 +72,12 @@ func TestPresetFiles(t *testing.T) {
 									},
 								},
 								{
+									Name: "tmp-dir",
+									VolumeSource: corev1.VolumeSource{
+										EmptyDir: &corev1.EmptyDirVolumeSource{},
+									},
+								},
+								{
 									Name: "dshm",
 									VolumeSource: corev1.VolumeSource{
 										EmptyDir: &corev1.EmptyDirVolumeSource{
@@ -94,14 +100,19 @@ func TestPresetFiles(t *testing.T) {
 							InitContainers: []corev1.Container{
 								{
 									Name:  "llm-d-routing-sidecar",
-									Image: "ghcr.io/llm-d/llm-d-routing-sidecar:v0.7.1",
+									Image: "ghcr.io/llm-d/llm-d-router-disagg-sidecar:v0.10.0",
 									Command: []string{
 										"/app/pd-sidecar",
 										"--port=8000",
+<<<<<<< HEAD
 										"--vllm-port=8001",
+=======
+										"--model-server-port=8001",
+>>>>>>> source/main
 										"--kv-connector=nixlv2",
 										"--enable-ssrf-protection=true",
 										"--pool-group=inference.networking.x-k8s.io",
+										"--inference-pool=test-llm-preset-test/test-llm-preset-inference-pool",
 										"--secure-proxy=false",
 										"",
 										"",
@@ -129,11 +140,11 @@ func TestPresetFiles(t *testing.T) {
 									},
 									SecurityContext: &corev1.SecurityContext{
 										AllowPrivilegeEscalation: ptr.To(false),
-										RunAsNonRoot:             ptr.To(false),
+										RunAsNonRoot:             ptr.To(true),
 										Capabilities: &corev1.Capabilities{
 											Drop: []corev1.Capability{"ALL"},
 										},
-										ReadOnlyRootFilesystem: ptr.To(true),
+										ReadOnlyRootFilesystem: ptr.To(false),
 										SeccompProfile: &corev1.SeccompProfile{
 											Type: corev1.SeccompProfileTypeRuntimeDefault,
 										},
@@ -180,7 +191,7 @@ func TestPresetFiles(t *testing.T) {
 							Containers: []corev1.Container{
 								{
 									Name:  "main",
-									Image: "ghcr.io/llm-d/llm-d-cuda:v0.6.0",
+									Image: "ghcr.io/llm-d/llm-d-cuda:v0.9.0",
 									Ports: []corev1.ContainerPort{
 										{
 											ContainerPort: 8001,
@@ -205,6 +216,10 @@ func TestPresetFiles(t *testing.T) {
 										{
 											Name:      "home",
 											MountPath: "/home",
+										},
+										{
+											Name:      "tmp-dir",
+											MountPath: "/tmp",
 										},
 										{
 											Name:      "dshm",
@@ -229,9 +244,9 @@ func TestPresetFiles(t *testing.T) {
 											},
 										},
 
-										TimeoutSeconds:   10,
+										TimeoutSeconds:   1,
 										PeriodSeconds:    10,
-										FailureThreshold: 3,
+										FailureThreshold: 10,
 									},
 									ReadinessProbe: &corev1.Probe{
 										ProbeHandler: corev1.ProbeHandler{
@@ -242,9 +257,9 @@ func TestPresetFiles(t *testing.T) {
 											},
 										},
 
-										TimeoutSeconds:   5,
-										PeriodSeconds:    30,
-										FailureThreshold: 60,
+										TimeoutSeconds:   1,
+										PeriodSeconds:    1,
+										FailureThreshold: 2,
 									},
 									StartupProbe: &corev1.Probe{
 										ProbeHandler: corev1.ProbeHandler{
@@ -256,6 +271,13 @@ func TestPresetFiles(t *testing.T) {
 										},
 										FailureThreshold: 60,
 										PeriodSeconds:    10,
+									},
+									Lifecycle: &corev1.Lifecycle{
+										PreStop: &corev1.LifecycleHandler{
+											Exec: &corev1.ExecAction{
+												Command: []string{"/bin/sleep", "15"},
+											},
+										},
 									},
 									TerminationMessagePath:   "/dev/termination-log",
 									TerminationMessagePolicy: "FallbackToLogsOnError",
@@ -270,7 +292,7 @@ func TestPresetFiles(t *testing.T) {
 											Drop: []corev1.Capability{"ALL"},
 										},
 										AllowPrivilegeEscalation: ptr.To(false),
-										RunAsNonRoot:             ptr.To(false),
+										RunAsNonRoot:             ptr.To(true),
 										ReadOnlyRootFilesystem:   ptr.To(false),
 										SeccompProfile: &corev1.SeccompProfile{
 											Type: corev1.SeccompProfileTypeRuntimeDefault,
@@ -278,12 +300,18 @@ func TestPresetFiles(t *testing.T) {
 									},
 								},
 							},
-							TerminationGracePeriodSeconds: ptr.To(int64(30)),
+							TerminationGracePeriodSeconds: ptr.To(int64(60)),
 						},
 						Worker: &corev1.PodSpec{
 							Volumes: []corev1.Volume{
 								{
 									Name: "home",
+									VolumeSource: corev1.VolumeSource{
+										EmptyDir: &corev1.EmptyDirVolumeSource{},
+									},
+								},
+								{
+									Name: "tmp-dir",
 									VolumeSource: corev1.VolumeSource{
 										EmptyDir: &corev1.EmptyDirVolumeSource{},
 									},
@@ -308,11 +336,11 @@ func TestPresetFiles(t *testing.T) {
 									VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "test-llm-preset-kserve-self-signed-certs"}},
 								},
 							},
-							TerminationGracePeriodSeconds: ptr.To(int64(30)),
+							TerminationGracePeriodSeconds: ptr.To(int64(60)),
 							Containers: []corev1.Container{
 								{
 									Name:  "main",
-									Image: "ghcr.io/llm-d/llm-d-cuda:v0.6.0",
+									Image: "ghcr.io/llm-d/llm-d-cuda:v0.9.0",
 									Ports: []corev1.ContainerPort{
 										{
 											ContainerPort: 8001,
@@ -323,6 +351,10 @@ func TestPresetFiles(t *testing.T) {
 										{
 											Name:      "home",
 											MountPath: "/home",
+										},
+										{
+											Name:      "tmp-dir",
+											MountPath: "/tmp",
 										},
 										{
 											Name:      "dshm",
@@ -348,7 +380,7 @@ func TestPresetFiles(t *testing.T) {
 											Drop: []corev1.Capability{"ALL"},
 										},
 										AllowPrivilegeEscalation: ptr.To(false),
-										RunAsNonRoot:             ptr.To(false),
+										RunAsNonRoot:             ptr.To(true),
 										ReadOnlyRootFilesystem:   ptr.To(false),
 										SeccompProfile: &corev1.SeccompProfile{
 											Type: corev1.SeccompProfileTypeRuntimeDefault,
@@ -370,6 +402,13 @@ func TestPresetFiles(t *testing.T) {
 										{
 											Name:  "VLLM_RANDOMIZE_DP_DUMMY_INPUTS",
 											Value: "1",
+										},
+									},
+									Lifecycle: &corev1.Lifecycle{
+										PreStop: &corev1.LifecycleHandler{
+											Exec: &corev1.ExecAction{
+												Command: []string{"/bin/sleep", "15"},
+											},
 										},
 									},
 									TerminationMessagePath:   "/dev/termination-log",
@@ -417,6 +456,12 @@ func TestPresetFiles(t *testing.T) {
 									},
 								},
 								{
+									Name: "tmp-dir",
+									VolumeSource: corev1.VolumeSource{
+										EmptyDir: &corev1.EmptyDirVolumeSource{},
+									},
+								},
+								{
 									Name:         "tls-certs",
 									VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "test-llm-preset-kserve-self-signed-certs"}},
 								},
@@ -424,7 +469,7 @@ func TestPresetFiles(t *testing.T) {
 							Containers: []corev1.Container{
 								{
 									Name:  "main",
-									Image: "ghcr.io/llm-d/llm-d-cuda:v0.6.0",
+									Image: "ghcr.io/llm-d/llm-d-cuda:v0.9.0",
 									Ports: []corev1.ContainerPort{
 										{
 											ContainerPort: 8000,
@@ -451,6 +496,10 @@ func TestPresetFiles(t *testing.T) {
 											MountPath: "/home",
 										},
 										{
+											Name:      "tmp-dir",
+											MountPath: "/tmp",
+										},
+										{
 											Name:      "dshm",
 											MountPath: "/dev/shm",
 										},
@@ -473,9 +522,9 @@ func TestPresetFiles(t *testing.T) {
 											},
 										},
 
-										TimeoutSeconds:   10,
+										TimeoutSeconds:   1,
 										PeriodSeconds:    10,
-										FailureThreshold: 3,
+										FailureThreshold: 10,
 									},
 									ReadinessProbe: &corev1.Probe{
 										ProbeHandler: corev1.ProbeHandler{
@@ -486,9 +535,9 @@ func TestPresetFiles(t *testing.T) {
 											},
 										},
 
-										TimeoutSeconds:   5,
-										PeriodSeconds:    10,
-										FailureThreshold: 60,
+										TimeoutSeconds:   1,
+										PeriodSeconds:    1,
+										FailureThreshold: 2,
 									},
 									StartupProbe: &corev1.Probe{
 										ProbeHandler: corev1.ProbeHandler{
@@ -501,6 +550,13 @@ func TestPresetFiles(t *testing.T) {
 										FailureThreshold: 60,
 										PeriodSeconds:    10,
 									},
+									Lifecycle: &corev1.Lifecycle{
+										PreStop: &corev1.LifecycleHandler{
+											Exec: &corev1.ExecAction{
+												Command: []string{"/bin/sleep", "15"},
+											},
+										},
+									},
 									TerminationMessagePath:   "/dev/termination-log",
 									TerminationMessagePolicy: "FallbackToLogsOnError",
 									ImagePullPolicy:          "IfNotPresent",
@@ -509,7 +565,7 @@ func TestPresetFiles(t *testing.T) {
 											Drop: []corev1.Capability{"ALL"},
 										},
 										AllowPrivilegeEscalation: ptr.To(false),
-										RunAsNonRoot:             ptr.To(false),
+										RunAsNonRoot:             ptr.To(true),
 										ReadOnlyRootFilesystem:   ptr.To(false),
 										SeccompProfile: &corev1.SeccompProfile{
 											Type: corev1.SeccompProfileTypeRuntimeDefault,
@@ -517,7 +573,7 @@ func TestPresetFiles(t *testing.T) {
 									},
 								},
 							},
-							TerminationGracePeriodSeconds: ptr.To(int64(30)),
+							TerminationGracePeriodSeconds: ptr.To(int64(60)),
 						},
 					},
 				},
@@ -577,12 +633,113 @@ func TestPresetFiles(t *testing.T) {
 	}
 }
 
+// TestSingleNodeTensorParallelRendered verifies that spec.parallelism.tensor
+// is rendered into --tensor-parallel-size for single-node (no Worker) templates.
+// Regression test for https://github.com/kserve/kserve/issues/5773
+func TestSingleNodeTensorParallelRendered(t *testing.T) {
+	presetsDir := filepath.Join(kservetesting.ProjectRoot(), "config", "llmisvcconfig")
+
+	tests := []struct {
+		name     string
+		file     string
+		llmSvc   *v1alpha2.LLMInferenceService
+		wantFlag string // substring to find; empty means --tensor-parallel-size must be absent
+	}{
+		{
+			name: "single-node base template",
+			file: "config-llm-template.yaml",
+			llmSvc: &v1alpha2.LLMInferenceService{
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "ns"},
+				Spec: v1alpha2.LLMInferenceServiceSpec{
+					Model: v1alpha2.LLMModelSpec{Name: ptr.To("model")},
+					WorkloadSpec: v1alpha2.WorkloadSpec{
+						Parallelism: &v1alpha2.ParallelismSpec{Tensor: ptr.To[int32](2)},
+					},
+				},
+			},
+			wantFlag: "--tensor-parallel-size 2",
+		},
+		{
+			name: "single-node decode template (P/D)",
+			file: "config-llm-decode-template.yaml",
+			llmSvc: &v1alpha2.LLMInferenceService{
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "ns"},
+				Spec: v1alpha2.LLMInferenceServiceSpec{
+					Model: v1alpha2.LLMModelSpec{Name: ptr.To("model")},
+					WorkloadSpec: v1alpha2.WorkloadSpec{
+						Parallelism: &v1alpha2.ParallelismSpec{Tensor: ptr.To[int32](4)},
+					},
+				},
+			},
+			wantFlag: "--tensor-parallel-size 4",
+		},
+		{
+			name: "single-node prefill template (P/D)",
+			file: "config-llm-prefill-template.yaml",
+			llmSvc: &v1alpha2.LLMInferenceService{
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "ns"},
+				Spec: v1alpha2.LLMInferenceServiceSpec{
+					Model: v1alpha2.LLMModelSpec{Name: ptr.To("model")},
+					Prefill: &v1alpha2.WorkloadSpec{
+						Parallelism: &v1alpha2.ParallelismSpec{Tensor: ptr.To[int32](2)},
+					},
+				},
+			},
+			wantFlag: "--tensor-parallel-size 2",
+		},
+		{
+			name: "single-node base template - no parallelism omits flag",
+			file: "config-llm-template.yaml",
+			llmSvc: &v1alpha2.LLMInferenceService{
+				ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "ns"},
+				Spec: v1alpha2.LLMInferenceServiceSpec{
+					Model: v1alpha2.LLMModelSpec{Name: ptr.To("model")},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := filepath.Join(presetsDir, tt.file)
+			data, err := os.ReadFile(filepath.Clean(filePath))
+			if err != nil {
+				t.Fatalf("read %s: %v", tt.file, err)
+			}
+			config := loadConfig(t, data, tt.file)
+
+			got, err := llmisvc.ReplaceVariables(tt.llmSvc, config, &llmisvc.Config{})
+			if err != nil {
+				t.Fatalf("ReplaceVariables: %v", err)
+			}
+
+			var containers []corev1.Container
+			switch {
+			case got.Spec.Prefill != nil && got.Spec.Prefill.Template != nil:
+				containers = got.Spec.Prefill.Template.Containers
+			case got.Spec.Template != nil:
+				containers = got.Spec.Template.Containers
+			}
+			if len(containers) == 0 {
+				t.Fatal("expected at least one container")
+			}
+
+			cmd := strings.Join(containers[0].Command, " ")
+			if tt.wantFlag != "" {
+				if !strings.Contains(cmd, tt.wantFlag) {
+					t.Errorf("rendered command does not contain %q:\n%s", tt.wantFlag, cmd)
+				}
+			} else {
+				if strings.Contains(cmd, "--tensor-parallel-size") {
+					t.Errorf("rendered command should not contain --tensor-parallel-size:\n%s", cmd)
+				}
+			}
+		})
+	}
+}
+
 func loadConfig(t *testing.T, data []byte, filePath string) *v1alpha2.LLMInferenceServiceConfig {
 	config := &v1alpha2.LLMInferenceServiceConfig{}
-	if err := yaml.Unmarshal(data, config); err != nil {
-		t.Errorf("Failed to unmarshal YAML from %s: %v", filePath, err)
-		return nil
-	}
 	if err := yaml.Unmarshal(data, config); err != nil {
 		t.Errorf("Failed to unmarshal YAML from %s: %v", filePath, err)
 		return nil

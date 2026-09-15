@@ -22,6 +22,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -29,6 +30,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apixclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -51,8 +53,11 @@ import (
 
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha1"
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
+	"github.com/kserve/kserve/pkg/constants"
 	"github.com/kserve/kserve/pkg/controller/v1alpha2/llmisvc"
 	kservescheme "github.com/kserve/kserve/pkg/scheme"
+	kservetls "github.com/kserve/kserve/pkg/tls"
+	llmisvcwebhook "github.com/kserve/kserve/pkg/webhook/admission/llminferenceservice"
 )
 
 var (
@@ -77,11 +82,22 @@ type Options struct {
 	metricsAddr           string
 	webhookPort           int
 	enableLeaderElection  bool
+<<<<<<< HEAD
 	probeAddr             string
 	metricsSecure         bool
 	enableHTTP2           bool
 	migrationTimeout      time.Duration
 	migrationPollInterval time.Duration
+=======
+	enableHTTP2           bool
+	probeAddr             string
+	metricsSecure         bool
+	metricsCertPath       string
+	migrationTimeout      time.Duration
+	migrationPollInterval time.Duration
+	tlsMinVersion         string
+	tlsCipherSuites       string
+>>>>>>> source/main
 	zapOpts               zap.Options
 }
 
@@ -92,7 +108,10 @@ func DefaultOptions() Options {
 		enableLeaderElection:  false,
 		probeAddr:             ":8081",
 		metricsSecure:         true,
+<<<<<<< HEAD
 		enableHTTP2:           false,
+=======
+>>>>>>> source/main
 		migrationTimeout:      1 * time.Hour,
 		migrationPollInterval: 30 * time.Second,
 		zapOpts:               zap.Options{},
@@ -108,8 +127,16 @@ func GetOptions() Options {
 		"Enable leader election for kserve controller manager. "+
 			"Enabling this will ensure there is only one active kserve controller manager.")
 	flag.StringVar(&opts.probeAddr, "health-probe-addr", opts.probeAddr, "The address the probe endpoint binds to.")
+<<<<<<< HEAD
 	flag.BoolVar(&opts.metricsSecure, "metrics-secure", opts.metricsSecure, "Whether to serve metric via HTTPS.")
 	flag.BoolVar(&opts.enableHTTP2, "enable-http2", false, "If set, HTTP/2 will be enabled for the metrics and webhook servers")
+=======
+	flag.BoolVar(&opts.metricsSecure, "metrics-secure", opts.metricsSecure, "Whether to serve metrics via HTTPS.")
+	flag.StringVar(&opts.metricsCertPath, "metrics-cert-path", opts.metricsCertPath, "Directory containing tls.crt and tls.key for the metrics server. If empty, self-signed certificates are generated.")
+	flag.BoolVar(&opts.enableHTTP2, "enable-http2", false, "Deprecated: CVE-2023-44487 is fixed in Go 1.21.3+. Use --tls-min-version and --tls-cipher-suites instead.")
+	flag.StringVar(&opts.tlsMinVersion, "tls-min-version", opts.tlsMinVersion, "Minimum TLS version (VersionTLS12, VersionTLS13). Defaults to VersionTLS12.")
+	flag.StringVar(&opts.tlsCipherSuites, "tls-cipher-suites", opts.tlsCipherSuites, "Comma-separated list of TLS cipher suites (Go names). If empty, Go defaults are used.")
+>>>>>>> source/main
 	flag.DurationVar(&opts.migrationTimeout, "storage-migration-timeout", opts.migrationTimeout, "Total retry budget for storage version migration.")
 	flag.DurationVar(&opts.migrationPollInterval, "storage-migration-poll-interval", opts.migrationPollInterval, "Polling interval for storage version migration retries after initial backoff.")
 	opts.zapOpts.BindFlags(flag.CommandLine)
@@ -149,24 +176,44 @@ func main() {
 		os.Exit(1)
 	}
 
-	// http/2 should be disabled due to its vulnerabilities. More specifically, disabling http/2 will
-	// prevent from being vulnerable to the HTTP/2 Stream Cancellation and
-	// Rapid Reset CVEs. For more information see:
-	// - https://github.com/advisories/GHSA-qppj-fm5r-hxr3
-	// - https://github.com/advisories/GHSA-4374-p667-p6c8
-	disableHTTP2 := func(c *tls.Config) {
-		setupLog.Info("disabling http/2")
-		c.NextProtos = []string{"http/1.1"}
-	}
+	var enableHTTP2Set bool
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "enable-http2" {
+			enableHTTP2Set = true
+		}
+	})
 
 	var tlsOpts []func(*tls.Config)
-	if !options.enableHTTP2 {
-		tlsOpts = append(tlsOpts, disableHTTP2)
+	switch {
+	case options.tlsMinVersion != "" || options.tlsCipherSuites != "":
+		var err error
+		tlsOpts, err = resolveTLS(ctx, cfg, options.tlsMinVersion, options.tlsCipherSuites)
+		if err != nil {
+			setupLog.Error(err, "unable to resolve TLS configuration")
+			os.Exit(1)
+		}
+	case enableHTTP2Set:
+		setupLog.Info("WARNING: --enable-http2 is deprecated and will be removed in a future release. " +
+			"CVE-2023-44487 is fixed in Go 1.21.3+. Use --tls-min-version and --tls-cipher-suites instead.")
+		if !options.enableHTTP2 {
+			tlsOpts = kservetls.LegacyHTTP2TLSOpts()
+		} else {
+			var err error
+			tlsOpts, err = resolveTLS(ctx, cfg, "", "")
+			if err != nil {
+				setupLog.Error(err, "unable to resolve TLS configuration")
+				os.Exit(1)
+			}
+		}
+	default:
+		var err error
+		tlsOpts, err = resolveTLS(ctx, cfg, "", "")
+		if err != nil {
+			setupLog.Error(err, "unable to resolve TLS configuration")
+			os.Exit(1)
+		}
 	}
-	// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.
-	// More info:
-	// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/metrics/server
-	// - https://book.kubebuilder.io/reference/metrics.html
+
 	metricsServerOptions := metricsserver.Options{
 		BindAddress:   options.metricsAddr,
 		SecureServing: options.metricsSecure,
@@ -174,11 +221,10 @@ func main() {
 	}
 
 	if options.metricsSecure {
-		// FilterProvider is used to protect the metrics endpoint with authn/authz.
-		// These configurations ensure that only authorized users and service accounts
-		// can access the metrics endpoint. The RBAC are configured in 'config/rbac/kustomization.yaml'. More info:
-		// https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/metrics/filters#WithAuthenticationAndAuthorization
 		metricsServerOptions.FilterProvider = filters.WithAuthenticationAndAuthorization
+	}
+	if options.metricsCertPath != "" {
+		metricsServerOptions.CertDir = options.metricsCertPath
 	}
 
 	llmSvcCacheSelector, _ := metav1.LabelSelectorAsSelector(&llmisvc.ChildResourcesLabelSelector)
@@ -196,7 +242,16 @@ func main() {
 					Label: llmSvcCacheSelector,
 				},
 				&corev1.ConfigMap{}: {
-					Label: llmSvcCacheSelector,
+					Namespaces: map[string]cache.Config{
+						cache.AllNamespaces: {
+							LabelSelector: llmSvcCacheSelector,
+						},
+						constants.KServeNamespace: {
+							// Namespace-specific cache configs do not merge with AllNamespaces.
+							// Keep the system namespace scope limited to the global config read by LLMISVC.
+							FieldSelector: fields.OneTermEqualSelector("metadata.name", constants.InferenceServiceConfigMapName),
+						},
+					},
 				},
 				&appsv1.Deployment{}: {
 					Label: llmSvcCacheSelector,
@@ -232,17 +287,21 @@ func main() {
 		setupLog.Error(err, "unable to create webhook", "webhook", "llminferenceservice-v1alpha1")
 		os.Exit(1)
 	}
+	const preventWellKnownConfigDeletionEnv = "PREVENT_WELL_KNOWN_CONFIG_DELETION"
+	preventWellKnownConfigDeletion, _ := strconv.ParseBool(constants.GetEnvOrDefault(preventWellKnownConfigDeletionEnv, "true"))
 	v1alpha1ConfigValidator := &v1alpha1.LLMInferenceServiceConfigValidator{
-		ConfigValidationFunc:   createV1Alpha1ConfigValidationFunc(clientSet),
-		WellKnownConfigChecker: wellKnownConfigChecker,
+		ConfigValidationFunc:           createV1Alpha1ConfigValidationFunc(mgr.GetAPIReader()),
+		WellKnownConfigChecker:         wellKnownConfigChecker,
+		PreventWellKnownConfigDeletion: preventWellKnownConfigDeletion,
 	}
 	if err = v1alpha1ConfigValidator.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "llminferenceserviceconfig-v1alpha1")
 		os.Exit(1)
 	}
 	v1alpha2ConfigValidator := &v1alpha2.LLMInferenceServiceConfigValidator{
-		ConfigValidationFunc:   createV1Alpha2ConfigValidationFunc(clientSet),
-		WellKnownConfigChecker: wellKnownConfigChecker,
+		ConfigValidationFunc:           createV1Alpha2ConfigValidationFunc(mgr.GetAPIReader()),
+		WellKnownConfigChecker:         wellKnownConfigChecker,
+		PreventWellKnownConfigDeletion: preventWellKnownConfigDeletion,
 	}
 	if err = v1alpha2ConfigValidator.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "llminferenceserviceconfig-v1alpha2")
@@ -269,12 +328,36 @@ func main() {
 		Config:        mgr.GetConfig(),
 		Clientset:     clientSet,
 		EventRecorder: llmEventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "LLMInferenceServiceController"}),
-		Validator: func(ctx context.Context, llmSvc *v1alpha2.LLMInferenceService) error {
-			_, err := v1alpha2LLMValidator.ValidateCreate(ctx, llmSvc)
-			return err
-		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "LLMInferenceService")
+		os.Exit(1)
+	}
+
+	// Register version-specific mutating webhooks.
+	// This ensures admission decoding matches request version (v1alpha1 or v1alpha2)
+	// before shared defaulting logic is applied.
+	if err = ctrl.NewWebhookManagedBy(mgr).
+		For(&v1alpha1.LLMInferenceService{}).
+		WithDefaulter(&llmisvcwebhook.LLMInferenceServiceDefaulterV1Alpha1{Client: mgr.GetClient(), Clientset: clientSet}).
+		Complete(); err != nil {
+		setupLog.Error(err, "unable to create defaulting webhook", "webhook", "llminferenceservice-v1alpha1")
+		os.Exit(1)
+	}
+
+	if err = ctrl.NewWebhookManagedBy(mgr).
+		For(&v1alpha2.LLMInferenceService{}).
+		WithDefaulter(&llmisvcwebhook.LLMInferenceServiceDefaulterV1Alpha2{Client: mgr.GetClient(), Clientset: clientSet}).
+		Complete(); err != nil {
+		setupLog.Error(err, "unable to create defaulting webhook", "webhook", "llminferenceservice-v1alpha2")
+		os.Exit(1)
+	}
+
+	setupLog.Info("Setting up LLMInferenceServiceConfig controller")
+	if err = (&llmisvc.LLMISVCConfigReconciler{
+		Client:        mgr.GetClient(),
+		EventRecorder: llmEventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "LLMInferenceServiceConfigController"}),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "LLMInferenceServiceConfig")
 		os.Exit(1)
 	}
 
@@ -329,7 +412,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Legacy VariantAutoscaling cleanup. Best-effort, never blocks the manager.
+	// Can be removed in a future release cycle.
+	if err := mgr.Add(leaderRunnable(func(ctx context.Context) error {
+		cleanupLegacyVAs(ctx, dynamic.NewForConfigOrDie(cfg), setupLog)
+		return nil
+	})); err != nil {
+		setupLog.Error(err, "unable to register legacy VA cleanup, stale VAs may remain until manual cleanup or LLMInferenceService deletion")
+	}
+
 	setupLog.Info("starting manager")
+	ctx, err = setupDistroStartup(ctx, mgr)
+	if err != nil {
+		setupLog.Error(err, "Failed to set up distro TLS watcher; profile changes will not trigger a restart")
+	}
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "unable to run the manager")
 		os.Exit(1)
@@ -343,8 +439,8 @@ func wellKnownConfigChecker(name string) bool {
 
 // validateLLMISVCConfig validates a v1alpha2 LLMInferenceServiceConfig by loading the controller
 // config and validating the template variables.
-func validateLLMISVCConfig(ctx context.Context, clientSet kubernetes.Interface, config *v1alpha2.LLMInferenceServiceConfig) error {
-	cfg, err := llmisvc.LoadConfig(ctx, clientSet)
+func validateLLMISVCConfig(ctx context.Context, reader client.Reader, config *v1alpha2.LLMInferenceServiceConfig) error {
+	cfg, err := llmisvc.LoadConfig(ctx, reader)
 	if err != nil {
 		return err
 	}
@@ -354,19 +450,19 @@ func validateLLMISVCConfig(ctx context.Context, clientSet kubernetes.Interface, 
 
 // createV1Alpha1ConfigValidationFunc creates a validation function for v1alpha1 LLMInferenceServiceConfig.
 // It converts the config to v1alpha2 and validates using the v1alpha2 llmisvc package.
-func createV1Alpha1ConfigValidationFunc(clientSet kubernetes.Interface) func(ctx context.Context, config *v1alpha1.LLMInferenceServiceConfig) error {
+func createV1Alpha1ConfigValidationFunc(reader client.Reader) func(ctx context.Context, config *v1alpha1.LLMInferenceServiceConfig) error {
 	return func(ctx context.Context, config *v1alpha1.LLMInferenceServiceConfig) error {
 		v2Config := &v1alpha2.LLMInferenceServiceConfig{}
 		if err := config.ConvertTo(v2Config); err != nil {
 			return err
 		}
-		return validateLLMISVCConfig(ctx, clientSet, v2Config)
+		return validateLLMISVCConfig(ctx, reader, v2Config)
 	}
 }
 
 // createV1Alpha2ConfigValidationFunc creates a validation function for v1alpha2 LLMInferenceServiceConfig.
-func createV1Alpha2ConfigValidationFunc(clientSet kubernetes.Interface) func(ctx context.Context, config *v1alpha2.LLMInferenceServiceConfig) error {
+func createV1Alpha2ConfigValidationFunc(reader client.Reader) func(ctx context.Context, config *v1alpha2.LLMInferenceServiceConfig) error {
 	return func(ctx context.Context, config *v1alpha2.LLMInferenceServiceConfig) error {
-		return validateLLMISVCConfig(ctx, clientSet, config)
+		return validateLLMISVCConfig(ctx, reader, config)
 	}
 }

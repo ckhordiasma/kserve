@@ -3,9 +3,12 @@ FROM registry.access.redhat.com/ubi9/go-toolset:1.25 AS deps
 # distro: UBI go-toolset does not add GOPATH/bin to PATH
 ENV PATH="$PATH:/opt/app-root/src/go/bin"
 
+# Run as root during build (final image uses nonroot)
+USER 0
+
 WORKDIR /go/src/github.com/kserve/kserve
-COPY go.mod  go.mod
-COPY go.sum  go.sum
+COPY --chown=1001:0 go.mod  go.mod
+COPY --chown=1001:0 go.sum  go.sum
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
@@ -13,11 +16,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM deps AS builder
 
 ARG CMD=router
+ARG GOTAGS=""
 COPY cmd/${CMD}/ cmd/${CMD}/
 COPY pkg/    pkg/
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOFLAGS=-mod=readonly go build -a -o router ./cmd/${CMD}
+    CGO_ENABLED=0 GOOS=linux GOFLAGS=-mod=readonly go build -tags "${GOTAGS}" -a -o router ./cmd/${CMD}
 
 # ---- License stage (parallel with build on BuildKit) ----
 FROM deps AS license

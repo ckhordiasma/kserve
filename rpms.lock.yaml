@@ -1,0 +1,440 @@
+---
+lockfileVersion: 1
+lockfileVendor: redhat
+arches:
+- arch: aarch64
+  packages:
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/l/libnsl2-2.0.0-1.el9.aarch64.rpm
+    repoid: ubi-9-for-aarch64-appstream-rpms
+    size: 32849
+    checksum: sha256:5b38c8b55dbfc549271617e132d2d98ceaa9ca30711f73edd8b39a6af689de27
+    name: libnsl2
+    evr: 2.0.0-1.el9
+    sourcerpm: libnsl2-2.0.0-1.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/m/mpdecimal-2.5.1-3.el9.aarch64.rpm
+    repoid: ubi-9-for-aarch64-appstream-rpms
+    size: 92062
+    checksum: sha256:6bdb76d4bb510b0e435698a46a09d0849fb07b2f53c00239e8989d8f141d1d14
+    name: mpdecimal
+    evr: 2.5.1-3.el9
+    sourcerpm: mpdecimal-2.5.1-3.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/python3.12-3.12.14-1.el9_8.aarch64.rpm
+    repoid: ubi-9-for-aarch64-appstream-rpms
+    size: 32440
+    checksum: sha256:127b8467e15c3f233d87bdb85c57809332eefb2e7b483aca7a08790dd9b62b74
+    name: python3.12
+    evr: 3.12.14-1.el9_8
+    sourcerpm: python3.12-3.12.14-1.el9_8.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/python3.12-libs-3.12.14-1.el9_8.aarch64.rpm
+    repoid: ubi-9-for-aarch64-appstream-rpms
+    size: 10145691
+    checksum: sha256:cca9ebdb4242036911ccc7271de7cb9e3d621c152b402f781ae22b700ab02231
+    name: python3.12-libs
+    evr: 3.12.14-1.el9_8
+    sourcerpm: python3.12-3.12.14-1.el9_8.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/python3.12-pip-23.2.1-5.el9.noarch.rpm
+    repoid: ubi-9-for-aarch64-appstream-rpms
+    size: 3370313
+    checksum: sha256:7abdc28c07f4286ef1da5a5033266f89b7aed4d61cb13b9fec3cfa7576ed6fde
+    name: python3.12-pip
+    evr: 23.2.1-5.el9
+    sourcerpm: python3.12-pip-23.2.1-5.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/python3.12-pip-wheel-23.2.1-5.el9.noarch.rpm
+    repoid: ubi-9-for-aarch64-appstream-rpms
+    size: 1527128
+    checksum: sha256:b3271e01edab5152b4f62515faca4c171fb842b4e871f7d30651a076de621b0e
+    name: python3.12-pip-wheel
+    evr: 23.2.1-5.el9
+    sourcerpm: python3.12-pip-23.2.1-5.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/python3.12-setuptools-68.2.2-5.el9_6.noarch.rpm
+    repoid: ubi-9-for-aarch64-appstream-rpms
+    size: 1654905
+    checksum: sha256:6a7ea24faa6a5f2686b5e5b103a09f63b929b9bef70f1392dfea4ec5ef57c819
+    name: python3.12-setuptools
+    evr: 68.2.2-5.el9_6
+    sourcerpm: python3.12-setuptools-68.2.2-5.el9_6.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/e/expat-2.5.0-6.el9_8.3.aarch64.rpm
+    repoid: ubi-9-for-aarch64-baseos-rpms
+    size: 122400
+    checksum: sha256:df004398da989f75bae9267cfb0ad402ada6e6db46ebef0932c869894c013c08
+    name: expat
+    evr: 2.5.0-6.el9_8.3
+    sourcerpm: expat-2.5.0-6.el9_8.3.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libtirpc-1.3.3-9.el9.aarch64.rpm
+    repoid: ubi-9-for-aarch64-baseos-rpms
+    size: 98735
+    checksum: sha256:591a92387f21db11cb3607f566f95e1f4afe581428eec00f99539925560e1913
+    name: libtirpc
+    evr: 1.3.3-9.el9
+    sourcerpm: libtirpc-1.3.3-9.el9.src.rpm
+  source:
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/source/SRPMS/Packages/l/libnsl2-2.0.0-1.el9.src.rpm
+    repoid: ubi-9-for-aarch64-appstream-source-rpms
+    size: 56885
+    checksum: sha256:28fda2510dfa3d80c6f227354c3e917a104374e97566419e71ef5e246887c4e2
+    name: libnsl2
+    evr: 2.0.0-1.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/source/SRPMS/Packages/m/mpdecimal-2.5.1-3.el9.src.rpm
+    repoid: ubi-9-for-aarch64-appstream-source-rpms
+    size: 3334137
+    checksum: sha256:2f5ece89d6a8d892816f386462d8be291ad83f1500b4c4b3655dcc7ed5192c0d
+    name: mpdecimal
+    evr: 2.5.1-3.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/source/SRPMS/Packages/p/python3.12-3.12.14-1.el9_8.src.rpm
+    repoid: ubi-9-for-aarch64-appstream-source-rpms
+    size: 20894742
+    checksum: sha256:d855a90132b827b528e26c617484c250fd02dbe2cc8fdb8ef1f7d0d0a9f3f4f7
+    name: python3.12
+    evr: 3.12.14-1.el9_8
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/source/SRPMS/Packages/p/python3.12-pip-23.2.1-5.el9.src.rpm
+    repoid: ubi-9-for-aarch64-appstream-source-rpms
+    size: 9384965
+    checksum: sha256:531550a86dfbc5454ec925dbb8417ac3269e1ed4083a5af2a58d7501d730e430
+    name: python3.12-pip
+    evr: 23.2.1-5.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/source/SRPMS/Packages/p/python3.12-setuptools-68.2.2-5.el9_6.src.rpm
+    repoid: ubi-9-for-aarch64-appstream-source-rpms
+    size: 2219637
+    checksum: sha256:8c42914fd3691cee14049a40d523a9ff1ebcd8fbf9e74b801b94f0f422ddb064
+    name: python3.12-setuptools
+    evr: 68.2.2-5.el9_6
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/source/SRPMS/Packages/e/expat-2.5.0-6.el9_8.3.src.rpm
+    repoid: ubi-9-for-aarch64-baseos-source-rpms
+    size: 8403095
+    checksum: sha256:0cff2a2213384dc43eb1874bf6e77b2b8230be848f50387d8057e0e6cde3d392
+    name: expat
+    evr: 2.5.0-6.el9_8.3
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/source/SRPMS/Packages/l/libtirpc-1.3.3-9.el9.src.rpm
+    repoid: ubi-9-for-aarch64-baseos-source-rpms
+    size: 589716
+    checksum: sha256:95d684042f4c5f63ac57923639fd1e7d6d278766b4ee99feb24baa5567fe4b7e
+    name: libtirpc
+    evr: 1.3.3-9.el9
+  module_metadata: []
+- arch: ppc64le
+  packages:
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/os/Packages/l/libnsl2-2.0.0-1.el9.ppc64le.rpm
+    repoid: ubi-9-for-ppc64le-appstream-rpms
+    size: 34856
+    checksum: sha256:c2512678fbc0b12469c2a754895e75eceea5e13bc18efb09f619b8242d7e6f06
+    name: libnsl2
+    evr: 2.0.0-1.el9
+    sourcerpm: libnsl2-2.0.0-1.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/os/Packages/m/mpdecimal-2.5.1-3.el9.ppc64le.rpm
+    repoid: ubi-9-for-ppc64le-appstream-rpms
+    size: 106314
+    checksum: sha256:5689b49b6ebd204faaba278587ed7c6613af9ac48ca31c71d9d8ec343d7ddf07
+    name: mpdecimal
+    evr: 2.5.1-3.el9
+    sourcerpm: mpdecimal-2.5.1-3.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/os/Packages/p/python3.12-3.12.14-1.el9_8.ppc64le.rpm
+    repoid: ubi-9-for-ppc64le-appstream-rpms
+    size: 32494
+    checksum: sha256:8e3fcabf92bf5be325dbb114ab2921b92c3a3007c9bab8b24f93d3c2a5bb44c8
+    name: python3.12
+    evr: 3.12.14-1.el9_8
+    sourcerpm: python3.12-3.12.14-1.el9_8.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/os/Packages/p/python3.12-libs-3.12.14-1.el9_8.ppc64le.rpm
+    repoid: ubi-9-for-ppc64le-appstream-rpms
+    size: 10093244
+    checksum: sha256:32e4a045a4ce07f8db54811f223def1404fbabe4b7b521d48a56c7480f6b1057
+    name: python3.12-libs
+    evr: 3.12.14-1.el9_8
+    sourcerpm: python3.12-3.12.14-1.el9_8.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/os/Packages/p/python3.12-pip-23.2.1-5.el9.noarch.rpm
+    repoid: ubi-9-for-ppc64le-appstream-rpms
+    size: 3370313
+    checksum: sha256:7abdc28c07f4286ef1da5a5033266f89b7aed4d61cb13b9fec3cfa7576ed6fde
+    name: python3.12-pip
+    evr: 23.2.1-5.el9
+    sourcerpm: python3.12-pip-23.2.1-5.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/os/Packages/p/python3.12-pip-wheel-23.2.1-5.el9.noarch.rpm
+    repoid: ubi-9-for-ppc64le-appstream-rpms
+    size: 1527128
+    checksum: sha256:b3271e01edab5152b4f62515faca4c171fb842b4e871f7d30651a076de621b0e
+    name: python3.12-pip-wheel
+    evr: 23.2.1-5.el9
+    sourcerpm: python3.12-pip-23.2.1-5.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/os/Packages/p/python3.12-setuptools-68.2.2-5.el9_6.noarch.rpm
+    repoid: ubi-9-for-ppc64le-appstream-rpms
+    size: 1654905
+    checksum: sha256:6a7ea24faa6a5f2686b5e5b103a09f63b929b9bef70f1392dfea4ec5ef57c819
+    name: python3.12-setuptools
+    evr: 68.2.2-5.el9_6
+    sourcerpm: python3.12-setuptools-68.2.2-5.el9_6.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/baseos/os/Packages/e/expat-2.5.0-6.el9_8.3.ppc64le.rpm
+    repoid: ubi-9-for-ppc64le-baseos-rpms
+    size: 133470
+    checksum: sha256:731fb187d6550a4a5fc6227d43370464d67a68e9fb41481c2e86b95e4560345b
+    name: expat
+    evr: 2.5.0-6.el9_8.3
+    sourcerpm: expat-2.5.0-6.el9_8.3.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/baseos/os/Packages/l/libtirpc-1.3.3-9.el9.ppc64le.rpm
+    repoid: ubi-9-for-ppc64le-baseos-rpms
+    size: 112487
+    checksum: sha256:a2bfcdaf2d192dcae021e69c61a5783060ca3e247a0d4fd049336fa3bbd9033a
+    name: libtirpc
+    evr: 1.3.3-9.el9
+    sourcerpm: libtirpc-1.3.3-9.el9.src.rpm
+  source:
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/source/SRPMS/Packages/l/libnsl2-2.0.0-1.el9.src.rpm
+    repoid: ubi-9-for-ppc64le-appstream-source-rpms
+    size: 56885
+    checksum: sha256:28fda2510dfa3d80c6f227354c3e917a104374e97566419e71ef5e246887c4e2
+    name: libnsl2
+    evr: 2.0.0-1.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/source/SRPMS/Packages/m/mpdecimal-2.5.1-3.el9.src.rpm
+    repoid: ubi-9-for-ppc64le-appstream-source-rpms
+    size: 3334137
+    checksum: sha256:2f5ece89d6a8d892816f386462d8be291ad83f1500b4c4b3655dcc7ed5192c0d
+    name: mpdecimal
+    evr: 2.5.1-3.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/source/SRPMS/Packages/p/python3.12-3.12.14-1.el9_8.src.rpm
+    repoid: ubi-9-for-ppc64le-appstream-source-rpms
+    size: 20894742
+    checksum: sha256:d855a90132b827b528e26c617484c250fd02dbe2cc8fdb8ef1f7d0d0a9f3f4f7
+    name: python3.12
+    evr: 3.12.14-1.el9_8
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/source/SRPMS/Packages/p/python3.12-pip-23.2.1-5.el9.src.rpm
+    repoid: ubi-9-for-ppc64le-appstream-source-rpms
+    size: 9384965
+    checksum: sha256:531550a86dfbc5454ec925dbb8417ac3269e1ed4083a5af2a58d7501d730e430
+    name: python3.12-pip
+    evr: 23.2.1-5.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/appstream/source/SRPMS/Packages/p/python3.12-setuptools-68.2.2-5.el9_6.src.rpm
+    repoid: ubi-9-for-ppc64le-appstream-source-rpms
+    size: 2219637
+    checksum: sha256:8c42914fd3691cee14049a40d523a9ff1ebcd8fbf9e74b801b94f0f422ddb064
+    name: python3.12-setuptools
+    evr: 68.2.2-5.el9_6
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/baseos/source/SRPMS/Packages/e/expat-2.5.0-6.el9_8.3.src.rpm
+    repoid: ubi-9-for-ppc64le-baseos-source-rpms
+    size: 8403095
+    checksum: sha256:0cff2a2213384dc43eb1874bf6e77b2b8230be848f50387d8057e0e6cde3d392
+    name: expat
+    evr: 2.5.0-6.el9_8.3
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/ppc64le/baseos/source/SRPMS/Packages/l/libtirpc-1.3.3-9.el9.src.rpm
+    repoid: ubi-9-for-ppc64le-baseos-source-rpms
+    size: 589716
+    checksum: sha256:95d684042f4c5f63ac57923639fd1e7d6d278766b4ee99feb24baa5567fe4b7e
+    name: libtirpc
+    evr: 1.3.3-9.el9
+  module_metadata: []
+- arch: s390x
+  packages:
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/os/Packages/l/libnsl2-2.0.0-1.el9.s390x.rpm
+    repoid: ubi-9-for-s390x-appstream-rpms
+    size: 32555
+    checksum: sha256:d53699f58ddc38f2a4b7538b7ec3bf7b44b426350fca5031410f016f6bfd18ee
+    name: libnsl2
+    evr: 2.0.0-1.el9
+    sourcerpm: libnsl2-2.0.0-1.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/os/Packages/m/mpdecimal-2.5.1-3.el9.s390x.rpm
+    repoid: ubi-9-for-s390x-appstream-rpms
+    size: 94813
+    checksum: sha256:b293069c431822060b400b3e9c05d93cd622b073578a69daeba394a7c148d933
+    name: mpdecimal
+    evr: 2.5.1-3.el9
+    sourcerpm: mpdecimal-2.5.1-3.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/os/Packages/p/python3.12-3.12.14-1.el9_8.s390x.rpm
+    repoid: ubi-9-for-s390x-appstream-rpms
+    size: 32298
+    checksum: sha256:1d9c6400225666643a98052596e6a10a3e0f84c81daf0fef28867331749bf2f9
+    name: python3.12
+    evr: 3.12.14-1.el9_8
+    sourcerpm: python3.12-3.12.14-1.el9_8.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/os/Packages/p/python3.12-libs-3.12.14-1.el9_8.s390x.rpm
+    repoid: ubi-9-for-s390x-appstream-rpms
+    size: 9974169
+    checksum: sha256:000bf9abc0a7627f453b50e1a94181a2f6729927d8d3324aa27ab8b251fb1ed1
+    name: python3.12-libs
+    evr: 3.12.14-1.el9_8
+    sourcerpm: python3.12-3.12.14-1.el9_8.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/os/Packages/p/python3.12-pip-23.2.1-5.el9.noarch.rpm
+    repoid: ubi-9-for-s390x-appstream-rpms
+    size: 3370313
+    checksum: sha256:7abdc28c07f4286ef1da5a5033266f89b7aed4d61cb13b9fec3cfa7576ed6fde
+    name: python3.12-pip
+    evr: 23.2.1-5.el9
+    sourcerpm: python3.12-pip-23.2.1-5.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/os/Packages/p/python3.12-pip-wheel-23.2.1-5.el9.noarch.rpm
+    repoid: ubi-9-for-s390x-appstream-rpms
+    size: 1527128
+    checksum: sha256:b3271e01edab5152b4f62515faca4c171fb842b4e871f7d30651a076de621b0e
+    name: python3.12-pip-wheel
+    evr: 23.2.1-5.el9
+    sourcerpm: python3.12-pip-23.2.1-5.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/os/Packages/p/python3.12-setuptools-68.2.2-5.el9_6.noarch.rpm
+    repoid: ubi-9-for-s390x-appstream-rpms
+    size: 1654905
+    checksum: sha256:6a7ea24faa6a5f2686b5e5b103a09f63b929b9bef70f1392dfea4ec5ef57c819
+    name: python3.12-setuptools
+    evr: 68.2.2-5.el9_6
+    sourcerpm: python3.12-setuptools-68.2.2-5.el9_6.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/baseos/os/Packages/e/expat-2.5.0-6.el9_8.3.s390x.rpm
+    repoid: ubi-9-for-s390x-baseos-rpms
+    size: 124579
+    checksum: sha256:e6bd000496dc070c1e4cfd17162d512111341820f12c10442b8752c0767c68a0
+    name: expat
+    evr: 2.5.0-6.el9_8.3
+    sourcerpm: expat-2.5.0-6.el9_8.3.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/baseos/os/Packages/l/libtirpc-1.3.3-9.el9.s390x.rpm
+    repoid: ubi-9-for-s390x-baseos-rpms
+    size: 96807
+    checksum: sha256:15e22f029018e50dbd098b5c7fcfbd004aa19abe4952b092ee2858b9d33534e3
+    name: libtirpc
+    evr: 1.3.3-9.el9
+    sourcerpm: libtirpc-1.3.3-9.el9.src.rpm
+  source:
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/source/SRPMS/Packages/l/libnsl2-2.0.0-1.el9.src.rpm
+    repoid: ubi-9-for-s390x-appstream-source-rpms
+    size: 56885
+    checksum: sha256:28fda2510dfa3d80c6f227354c3e917a104374e97566419e71ef5e246887c4e2
+    name: libnsl2
+    evr: 2.0.0-1.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/source/SRPMS/Packages/m/mpdecimal-2.5.1-3.el9.src.rpm
+    repoid: ubi-9-for-s390x-appstream-source-rpms
+    size: 3334137
+    checksum: sha256:2f5ece89d6a8d892816f386462d8be291ad83f1500b4c4b3655dcc7ed5192c0d
+    name: mpdecimal
+    evr: 2.5.1-3.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/source/SRPMS/Packages/p/python3.12-3.12.14-1.el9_8.src.rpm
+    repoid: ubi-9-for-s390x-appstream-source-rpms
+    size: 20894742
+    checksum: sha256:d855a90132b827b528e26c617484c250fd02dbe2cc8fdb8ef1f7d0d0a9f3f4f7
+    name: python3.12
+    evr: 3.12.14-1.el9_8
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/source/SRPMS/Packages/p/python3.12-pip-23.2.1-5.el9.src.rpm
+    repoid: ubi-9-for-s390x-appstream-source-rpms
+    size: 9384965
+    checksum: sha256:531550a86dfbc5454ec925dbb8417ac3269e1ed4083a5af2a58d7501d730e430
+    name: python3.12-pip
+    evr: 23.2.1-5.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/appstream/source/SRPMS/Packages/p/python3.12-setuptools-68.2.2-5.el9_6.src.rpm
+    repoid: ubi-9-for-s390x-appstream-source-rpms
+    size: 2219637
+    checksum: sha256:8c42914fd3691cee14049a40d523a9ff1ebcd8fbf9e74b801b94f0f422ddb064
+    name: python3.12-setuptools
+    evr: 68.2.2-5.el9_6
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/baseos/source/SRPMS/Packages/e/expat-2.5.0-6.el9_8.3.src.rpm
+    repoid: ubi-9-for-s390x-baseos-source-rpms
+    size: 8403095
+    checksum: sha256:0cff2a2213384dc43eb1874bf6e77b2b8230be848f50387d8057e0e6cde3d392
+    name: expat
+    evr: 2.5.0-6.el9_8.3
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/s390x/baseos/source/SRPMS/Packages/l/libtirpc-1.3.3-9.el9.src.rpm
+    repoid: ubi-9-for-s390x-baseos-source-rpms
+    size: 589716
+    checksum: sha256:95d684042f4c5f63ac57923639fd1e7d6d278766b4ee99feb24baa5567fe4b7e
+    name: libtirpc
+    evr: 1.3.3-9.el9
+  module_metadata: []
+- arch: x86_64
+  packages:
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/l/libnsl2-2.0.0-1.el9.x86_64.rpm
+    repoid: ubi-9-for-x86_64-appstream-rpms
+    size: 33287
+    checksum: sha256:052f7a182180528ba6e3c4378e5dcfb84640594a3e2e7bbe4f0167381e824ce0
+    name: libnsl2
+    evr: 2.0.0-1.el9
+    sourcerpm: libnsl2-2.0.0-1.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/m/mpdecimal-2.5.1-3.el9.x86_64.rpm
+    repoid: ubi-9-for-x86_64-appstream-rpms
+    size: 89670
+    checksum: sha256:89a8c9951ac56bed2caa1adbcba349c021af1134b6e2df3fc0a8a60577a4f54d
+    name: mpdecimal
+    evr: 2.5.1-3.el9
+    sourcerpm: mpdecimal-2.5.1-3.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/python3.12-3.12.14-1.el9_8.x86_64.rpm
+    repoid: ubi-9-for-x86_64-appstream-rpms
+    size: 32484
+    checksum: sha256:10640d8db1555fb7ae4e63c62be4b8f341032fb3ee52cc7176047438ab893b1f
+    name: python3.12
+    evr: 3.12.14-1.el9_8
+    sourcerpm: python3.12-3.12.14-1.el9_8.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/python3.12-libs-3.12.14-1.el9_8.x86_64.rpm
+    repoid: ubi-9-for-x86_64-appstream-rpms
+    size: 10211157
+    checksum: sha256:0eaade47a20924ba0fe3fb0a93898e053772248793069f40c1ba80c5115fddbb
+    name: python3.12-libs
+    evr: 3.12.14-1.el9_8
+    sourcerpm: python3.12-3.12.14-1.el9_8.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/python3.12-pip-23.2.1-5.el9.noarch.rpm
+    repoid: ubi-9-for-x86_64-appstream-rpms
+    size: 3370313
+    checksum: sha256:7abdc28c07f4286ef1da5a5033266f89b7aed4d61cb13b9fec3cfa7576ed6fde
+    name: python3.12-pip
+    evr: 23.2.1-5.el9
+    sourcerpm: python3.12-pip-23.2.1-5.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/python3.12-pip-wheel-23.2.1-5.el9.noarch.rpm
+    repoid: ubi-9-for-x86_64-appstream-rpms
+    size: 1527128
+    checksum: sha256:b3271e01edab5152b4f62515faca4c171fb842b4e871f7d30651a076de621b0e
+    name: python3.12-pip-wheel
+    evr: 23.2.1-5.el9
+    sourcerpm: python3.12-pip-23.2.1-5.el9.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/python3.12-setuptools-68.2.2-5.el9_6.noarch.rpm
+    repoid: ubi-9-for-x86_64-appstream-rpms
+    size: 1654905
+    checksum: sha256:6a7ea24faa6a5f2686b5e5b103a09f63b929b9bef70f1392dfea4ec5ef57c819
+    name: python3.12-setuptools
+    evr: 68.2.2-5.el9_6
+    sourcerpm: python3.12-setuptools-68.2.2-5.el9_6.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/e/expat-2.5.0-6.el9_8.3.x86_64.rpm
+    repoid: ubi-9-for-x86_64-baseos-rpms
+    size: 128577
+    checksum: sha256:3c9c96529f94f84fc19c8039d8852269e1085d16b5af2933f44ff286dec66a35
+    name: expat
+    evr: 2.5.0-6.el9_8.3
+    sourcerpm: expat-2.5.0-6.el9_8.3.src.rpm
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libtirpc-1.3.3-9.el9.x86_64.rpm
+    repoid: ubi-9-for-x86_64-baseos-rpms
+    size: 98934
+    checksum: sha256:f82cd69dc3aac881d5b574930c7d274687054cb5b03d3a8e3affa7bbcd5950b1
+    name: libtirpc
+    evr: 1.3.3-9.el9
+    sourcerpm: libtirpc-1.3.3-9.el9.src.rpm
+  source:
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/source/SRPMS/Packages/l/libnsl2-2.0.0-1.el9.src.rpm
+    repoid: ubi-9-for-x86_64-appstream-source-rpms
+    size: 56885
+    checksum: sha256:28fda2510dfa3d80c6f227354c3e917a104374e97566419e71ef5e246887c4e2
+    name: libnsl2
+    evr: 2.0.0-1.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/source/SRPMS/Packages/m/mpdecimal-2.5.1-3.el9.src.rpm
+    repoid: ubi-9-for-x86_64-appstream-source-rpms
+    size: 3334137
+    checksum: sha256:2f5ece89d6a8d892816f386462d8be291ad83f1500b4c4b3655dcc7ed5192c0d
+    name: mpdecimal
+    evr: 2.5.1-3.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/source/SRPMS/Packages/p/python3.12-3.12.14-1.el9_8.src.rpm
+    repoid: ubi-9-for-x86_64-appstream-source-rpms
+    size: 20894742
+    checksum: sha256:d855a90132b827b528e26c617484c250fd02dbe2cc8fdb8ef1f7d0d0a9f3f4f7
+    name: python3.12
+    evr: 3.12.14-1.el9_8
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/source/SRPMS/Packages/p/python3.12-pip-23.2.1-5.el9.src.rpm
+    repoid: ubi-9-for-x86_64-appstream-source-rpms
+    size: 9384965
+    checksum: sha256:531550a86dfbc5454ec925dbb8417ac3269e1ed4083a5af2a58d7501d730e430
+    name: python3.12-pip
+    evr: 23.2.1-5.el9
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/source/SRPMS/Packages/p/python3.12-setuptools-68.2.2-5.el9_6.src.rpm
+    repoid: ubi-9-for-x86_64-appstream-source-rpms
+    size: 2219637
+    checksum: sha256:8c42914fd3691cee14049a40d523a9ff1ebcd8fbf9e74b801b94f0f422ddb064
+    name: python3.12-setuptools
+    evr: 68.2.2-5.el9_6
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/source/SRPMS/Packages/e/expat-2.5.0-6.el9_8.3.src.rpm
+    repoid: ubi-9-for-x86_64-baseos-source-rpms
+    size: 8403095
+    checksum: sha256:0cff2a2213384dc43eb1874bf6e77b2b8230be848f50387d8057e0e6cde3d392
+    name: expat
+    evr: 2.5.0-6.el9_8.3
+  - url: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/source/SRPMS/Packages/l/libtirpc-1.3.3-9.el9.src.rpm
+    repoid: ubi-9-for-x86_64-baseos-source-rpms
+    size: 589716
+    checksum: sha256:95d684042f4c5f63ac57923639fd1e7d6d278766b4ee99feb24baa5567fe4b7e
+    name: libtirpc
+    evr: 1.3.3-9.el9
+  module_metadata: []

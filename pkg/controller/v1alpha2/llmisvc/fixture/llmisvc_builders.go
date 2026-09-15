@@ -19,15 +19,18 @@ package fixture
 import (
 	"maps"
 
+	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"knative.dev/pkg/apis"
 	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sigs.k8s.io/yaml"
 
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
+	"github.com/kserve/kserve/pkg/constants"
 )
 
 type LLMInferenceServiceOption ObjectOption[*v1alpha2.LLMInferenceService]
@@ -63,7 +66,25 @@ func WithModelName(name string) LLMInferenceServiceOption {
 	}
 }
 
-func WithGatewayRefs(refs ...v1alpha2.UntypedObjectReference) LLMInferenceServiceOption {
+func WithLoRAAdapters(adapterNames ...string) LLMInferenceServiceOption {
+	return func(llmSvc *v1alpha2.LLMInferenceService) {
+		if llmSvc.Spec.Model.LoRA == nil {
+			llmSvc.Spec.Model.LoRA = &v1alpha2.LoRASpec{}
+		}
+		for _, name := range adapterNames {
+			adapterURL, err := apis.ParseURL("hf://test-org/" + name)
+			if err != nil {
+				panic(err)
+			}
+			llmSvc.Spec.Model.LoRA.Adapters = append(llmSvc.Spec.Model.LoRA.Adapters, v1alpha2.LLMModelSpec{
+				Name: ptr.To(name),
+				URI:  *adapterURL,
+			})
+		}
+	}
+}
+
+func WithGatewayRefs(refs ...v1alpha2.GatewayObjectReference) LLMInferenceServiceOption {
 	return func(llmSvc *v1alpha2.LLMInferenceService) {
 		if llmSvc.Spec.Router == nil {
 			llmSvc.Spec.Router = &v1alpha2.RouterSpec{}
@@ -127,12 +148,56 @@ func WithManagedRoute() LLMInferenceServiceOption {
 	}
 }
 
+func WithGroup(group string) LLMInferenceServiceOption {
+	return func(llmSvc *v1alpha2.LLMInferenceService) {
+		if llmSvc.Spec.Router == nil {
+			llmSvc.Spec.Router = &v1alpha2.RouterSpec{}
+		}
+		if llmSvc.Spec.Router.Route == nil {
+			llmSvc.Spec.Router.Route = &v1alpha2.GatewayRoutesSpec{}
+		}
+		// Group routing requires managed HTTP routes (route.http must be non-nil).
+		if llmSvc.Spec.Router.Route.HTTP == nil {
+			llmSvc.Spec.Router.Route.HTTP = &v1alpha2.HTTPRouteSpec{}
+		}
+		llmSvc.Spec.Router.Route.Group = &group
+		// Mirror what the defaulting webhook does: sync the routing-group label
+		// so field indexers and label selectors work correctly in envtest
+		// (where the defaulting webhook is not installed).
+		if llmSvc.Labels == nil {
+			llmSvc.Labels = make(map[string]string)
+		}
+		llmSvc.Labels[constants.LLMRoutingGroupLabelKey] = group
+	}
+}
+
+func WithWeight(weight int32) LLMInferenceServiceOption {
+	return func(llmSvc *v1alpha2.LLMInferenceService) {
+		if llmSvc.Spec.Router == nil {
+			llmSvc.Spec.Router = &v1alpha2.RouterSpec{}
+		}
+		if llmSvc.Spec.Router.Route == nil {
+			llmSvc.Spec.Router.Route = &v1alpha2.GatewayRoutesSpec{}
+		}
+		llmSvc.Spec.Router.Route.Weight = &weight
+	}
+}
+
 func WithAnnotations(annotationsToAdd map[string]string) LLMInferenceServiceOption {
 	return func(llmSvc *v1alpha2.LLMInferenceService) {
 		if llmSvc.Annotations == nil {
 			llmSvc.Annotations = make(map[string]string)
 		}
 		maps.Copy(llmSvc.Annotations, annotationsToAdd)
+	}
+}
+
+func WithSpecAnnotations(annotationsToAdd map[string]string) LLMInferenceServiceOption {
+	return func(llmSvc *v1alpha2.LLMInferenceService) {
+		if llmSvc.Spec.Annotations == nil {
+			llmSvc.Spec.Annotations = make(map[string]string)
+		}
+		maps.Copy(llmSvc.Spec.Annotations, annotationsToAdd)
 	}
 }
 
@@ -145,10 +210,22 @@ func WithLabels(labelsToAdd map[string]string) LLMInferenceServiceOption {
 	}
 }
 
-func LLMGatewayRef(name, namespace string) v1alpha2.UntypedObjectReference {
-	return v1alpha2.UntypedObjectReference{
-		Name:      gwapiv1.ObjectName(name),
-		Namespace: gwapiv1.Namespace(namespace),
+func LLMGatewayRef(name, namespace string) v1alpha2.GatewayObjectReference {
+	return v1alpha2.GatewayObjectReference{
+		UntypedObjectReference: v1alpha2.UntypedObjectReference{
+			Name:      gwapiv1.ObjectName(name),
+			Namespace: gwapiv1.Namespace(namespace),
+		},
+	}
+}
+
+func LLMGatewayRefWithSection(name, namespace, sectionName string) v1alpha2.GatewayObjectReference {
+	return v1alpha2.GatewayObjectReference{
+		UntypedObjectReference: v1alpha2.UntypedObjectReference{
+			Name:      gwapiv1.ObjectName(name),
+			Namespace: gwapiv1.Namespace(namespace),
+		},
+		SectionName: ptr.To(gwapiv1.SectionName(sectionName)),
 	}
 }
 
@@ -212,6 +289,58 @@ func KEDAScaling(minReplicas int32, maxReplicas int32) *v1alpha2.ScalingSpec {
 	}
 }
 
+// KEDAScalingWithIdleReplicaCount builds scaling.wva.keda with an idleReplicaCount,
+// e.g. idleReplicaCount=0 for true scale-to-zero.
+func KEDAScalingWithIdleReplicaCount(minReplicas int32, maxReplicas int32, idleReplicaCount int32) *v1alpha2.ScalingSpec {
+	return &v1alpha2.ScalingSpec{
+		MinReplicas: &minReplicas,
+		MaxReplicas: maxReplicas,
+		WVA: &v1alpha2.WVASpec{
+			ActuatorSpec: v1alpha2.ActuatorSpec{
+				KEDA: &v1alpha2.KEDAScalingSpec{
+					IdleReplicaCount: &idleReplicaCount,
+				},
+			},
+		},
+	}
+}
+
+// DirectKEDAScaling builds scaling.keda with user-defined triggers (no WVA).
+func DirectKEDAScaling(minReplicas int32, maxReplicas int32, triggers ...kedav1alpha1.ScaleTriggers) *v1alpha2.ScalingSpec {
+	if len(triggers) == 0 {
+		triggers = []kedav1alpha1.ScaleTriggers{
+			{Type: "cpu", Metadata: map[string]string{"value": "80"}},
+		}
+	}
+	return &v1alpha2.ScalingSpec{
+		MinReplicas: &minReplicas,
+		MaxReplicas: maxReplicas,
+		KEDA: &v1alpha2.DirectKEDAScalingSpec{
+			Triggers: triggers,
+		},
+	}
+}
+
+// DirectKEDAScalingWithIdleReplicaCount builds scaling.keda with user-defined triggers and an
+// idleReplicaCount (no WVA), e.g. idleReplicaCount=0 for true scale-to-zero.
+func DirectKEDAScalingWithIdleReplicaCount(minReplicas int32, maxReplicas int32, idleReplicaCount int32, triggers ...kedav1alpha1.ScaleTriggers) *v1alpha2.ScalingSpec {
+	if len(triggers) == 0 {
+		triggers = []kedav1alpha1.ScaleTriggers{
+			{Type: "cpu", Metadata: map[string]string{"value": "80"}},
+		}
+	}
+	return &v1alpha2.ScalingSpec{
+		MinReplicas: &minReplicas,
+		MaxReplicas: maxReplicas,
+		KEDA: &v1alpha2.DirectKEDAScalingSpec{
+			KEDAScalingSpec: v1alpha2.KEDAScalingSpec{
+				IdleReplicaCount: &idleReplicaCount,
+			},
+			Triggers: triggers,
+		},
+	}
+}
+
 func HPAScalingWithBehavior(minReplicas int32, maxReplicas int32, behavior *autoscalingv2.HorizontalPodAutoscalerBehavior) *v1alpha2.ScalingSpec {
 	return &v1alpha2.ScalingSpec{
 		MinReplicas: &minReplicas,
@@ -229,6 +358,21 @@ func HPAScalingWithBehavior(minReplicas int32, maxReplicas int32, behavior *auto
 func ScalingWithVariantCost(base *v1alpha2.ScalingSpec, variantCost string) *v1alpha2.ScalingSpec {
 	base.WVA.VariantCost = variantCost
 	return base
+}
+
+func WithRolloutStrategy(rs *v1alpha2.RolloutStrategy) LLMInferenceServiceOption {
+	return func(llmSvc *v1alpha2.LLMInferenceService) {
+		llmSvc.Spec.RolloutStrategy = rs
+	}
+}
+
+func WithPrefillRolloutStrategy(rs *v1alpha2.RolloutStrategy) LLMInferenceServiceOption {
+	return func(llmSvc *v1alpha2.LLMInferenceService) {
+		if llmSvc.Spec.Prefill == nil {
+			llmSvc.Spec.Prefill = &v1alpha2.WorkloadSpec{}
+		}
+		llmSvc.Spec.Prefill.RolloutStrategy = rs
+	}
 }
 
 func WithWorkloadLabels(labels map[string]string) LLMInferenceServiceOption {
@@ -420,6 +564,15 @@ func WithConfigManagedScheduler() LLMInferenceServiceConfigOption {
 	}
 }
 
+func WithConfigSpecAnnotations(annotationsToAdd map[string]string) LLMInferenceServiceConfigOption {
+	return func(config *v1alpha2.LLMInferenceServiceConfig) {
+		if config.Spec.Annotations == nil {
+			config.Spec.Annotations = make(map[string]string)
+		}
+		maps.Copy(config.Spec.Annotations, annotationsToAdd)
+	}
+}
+
 func WithConfigWorkloadTemplate(podSpec *corev1.PodSpec) LLMInferenceServiceConfigOption {
 	return func(config *v1alpha2.LLMInferenceServiceConfig) {
 		config.Spec.Template = podSpec
@@ -458,6 +611,18 @@ func WithConfigSchedulerConfigRef(configMapName, key string) LLMInferenceService
 	}
 }
 
+// WithManagedTokenizer sets an empty tokenizer spec on the scheduler as an
+// operational override. The tokenizer is normally auto-deployed when
+// token-producer or precise-prefix-cache-scorer plugins are detected in
+// inline config; this option forces tokenizer deployment for tests that
+// don't provide inline config.
+func WithManagedTokenizer() LLMInferenceServiceOption {
+	return func(llmSvc *v1alpha2.LLMInferenceService) {
+		ensureSchedulerSpec(&llmSvc.Spec)
+		llmSvc.Spec.Router.Scheduler.Tokenizer = &v1alpha2.TokenizerSpec{}
+	}
+}
+
 // WithSchedulerConfigInline sets an inline scheduler config on the LLMInferenceService.
 // The configYAML is converted to JSON since RawExtension.Raw expects JSON bytes.
 func WithSchedulerConfigInline(configYAML string) LLMInferenceServiceOption {
@@ -469,6 +634,23 @@ func WithSchedulerConfigInline(configYAML string) LLMInferenceServiceOption {
 		}
 		llmSvc.Spec.Router.Scheduler.Config = &v1alpha2.SchedulerConfigSpec{
 			Inline: &runtime.RawExtension{Raw: jsonBytes},
+		}
+	}
+}
+
+// WithSchedulerConfigTemplateArgs sets the scheduler config as a --config-text
+// argument on the "main" container of the scheduler pod template, instead of
+// spec.router.scheduler.config.inline.
+func WithSchedulerConfigTemplateArgs(configYAML string) LLMInferenceServiceOption {
+	return func(llmSvc *v1alpha2.LLMInferenceService) {
+		ensureSchedulerSpec(&llmSvc.Spec)
+		llmSvc.Spec.Router.Scheduler.Template = &corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "main",
+					Args: []string{"--config-text", configYAML},
+				},
+			},
 		}
 	}
 }
@@ -495,6 +677,43 @@ func WithSchedulerReplicas(replicas int32) LLMInferenceServiceOption {
 	return func(llmSvc *v1alpha2.LLMInferenceService) {
 		ensureSchedulerSpec(&llmSvc.Spec)
 		llmSvc.Spec.Router.Scheduler.Replicas = &replicas
+	}
+}
+
+// WithSchedulerVersion sets app.kubernetes.io/version in the scheduler's annotations.
+// It is typically paired with WithSchedulerCommand to exercise both gates of schedulerTlsRotationEnabled.
+func WithSchedulerVersion(version string) LLMInferenceServiceOption {
+	return func(llmSvc *v1alpha2.LLMInferenceService) {
+		ensureSchedulerSpec(&llmSvc.Spec)
+		if llmSvc.Spec.Router.Scheduler.Annotations == nil {
+			llmSvc.Spec.Router.Scheduler.Annotations = map[string]string{}
+		}
+		llmSvc.Spec.Router.Scheduler.Annotations["app.kubernetes.io/version"] = version
+	}
+}
+
+// WithSchedulerCommand sets the command on the main container of the scheduler Template.
+// Passing no arguments leaves Template nil, which triggers the FIPS-safe fallback in
+// schedulerTlsRotationEnabled (rotation enabled when version gate passes but no template).
+func WithSchedulerCommand(cmd ...string) LLMInferenceServiceOption {
+	return func(llmSvc *v1alpha2.LLMInferenceService) {
+		ensureSchedulerSpec(&llmSvc.Spec)
+		llmSvc.Spec.Router.Scheduler.Template = &corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "main", Command: cmd}},
+		}
+	}
+}
+
+// WithConfigSchedulerVersion sets app.kubernetes.io/version in the scheduler's annotations on
+// an LLMInferenceServiceConfig. Pass an empty string to explicitly clear the version so that
+// a namespace-local config can prevent a shared preset from injecting its version.
+func WithConfigSchedulerVersion(version string) LLMInferenceServiceConfigOption {
+	return func(config *v1alpha2.LLMInferenceServiceConfig) {
+		ensureSchedulerSpec(&config.Spec)
+		if config.Spec.Router.Scheduler.Annotations == nil {
+			config.Spec.Router.Scheduler.Annotations = map[string]string{}
+		}
+		config.Spec.Router.Scheduler.Annotations["app.kubernetes.io/version"] = version
 	}
 }
 

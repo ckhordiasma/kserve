@@ -45,8 +45,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	isvcutils "github.com/kserve/kserve/pkg/controller/v1beta1/inferenceservice/utils"
-
 	"github.com/kserve/kserve/pkg/apis/serving/v1beta1"
 	"github.com/kserve/kserve/pkg/constants"
 	"github.com/kserve/kserve/pkg/utils"
@@ -339,7 +337,9 @@ func (ir *IngressReconciler) reconcileExternalService(ctx context.Context, isvc 
 			}
 
 			// Return if no differences to reconcile.
-			if equality.Semantic.DeepEqual(desired, existing) {
+			// DeepDerivative treats zero/nil fields in desired as "don't care",
+			// so server-populated metadata fields on existing don't cause false diffs.
+			if equality.Semantic.DeepDerivative(desired, existing) {
 				return nil
 			}
 
@@ -351,8 +351,22 @@ func (ir *IngressReconciler) reconcileExternalService(ctx context.Context, isvc 
 			log.Info("Reconciling external service diff (-desired, +observed):", "diff", diff)
 			log.Info("Updating external service", "namespace", existing.Namespace, "name", existing.Name)
 			existing.Spec = desired.Spec
-			existing.Labels = desired.Labels
-			existing.Annotations = desired.Annotations
+			if desired.Labels != nil {
+				if existing.Labels == nil {
+					existing.Labels = make(map[string]string)
+				}
+				for k, v := range desired.Labels {
+					existing.Labels[k] = v
+				}
+			}
+			if desired.Annotations != nil {
+				if existing.Annotations == nil {
+					existing.Annotations = make(map[string]string)
+				}
+				for k, v := range desired.Annotations {
+					existing.Annotations[k] = v
+				}
+			}
 			err = ir.client.Update(ctx, existing)
 			if err != nil {
 				return errors.Wrapf(err, "fails to update external name service")
@@ -482,7 +496,7 @@ func createIngress(isvc *v1beta1.InferenceService, config *v1beta1.IngressConfig
 		})
 		return nil
 	}
-	backend := constants.PredictorServiceName(isvc.Name)
+	backend := constants.PredictorServiceName(isvc.Name, isvc.Spec.Predictor.Name)
 
 	if isvc.Spec.Transformer != nil {
 		backend = constants.TransformerServiceName(isvc.Name)
@@ -689,9 +703,7 @@ func createIngress(isvc *v1beta1.InferenceService, config *v1beta1.IngressConfig
 			}
 		}
 	}
-	annotations := utils.Filter(isvc.Annotations, func(key string) bool {
-		return !utils.Includes(isvcutils.FilterList(isvcConfig.ServiceAnnotationDisallowedList, constants.ODHKserveRawAuth), key)
-	})
+	annotations := filterIngressAnnotations(isvc.Annotations, isvcConfig.ServiceAnnotationDisallowedList)
 	desiredIngress := &istioclientv1beta1.VirtualService{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        isvc.Name,
@@ -739,7 +751,7 @@ func getHostPrefix(isvc *v1beta1.InferenceService, disableIstioVirtualHost bool)
 		if isvc.Spec.Transformer != nil {
 			return constants.TransformerServiceName(isvc.Name)
 		}
-		return constants.PredictorServiceName(isvc.Name)
+		return constants.PredictorServiceName(isvc.Name, isvc.Spec.Predictor.Name)
 	}
 	return isvc.Name
 }

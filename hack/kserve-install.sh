@@ -16,12 +16,14 @@ INSTALL_METHOD="helm"
 ENABLE_KEDA=false
 DEPS_ONLY=false
 UNINSTALL=false
+KSERVE_INSTALL_CI=false
 USE_LOCAL_CHARTS=false
 ENABLE_KSERVE=false
 ENABLE_LOCALMODEL=false
 ENABLE_LLMISVC=false
 SET_KSERVE_VERSION=""
 SET_KSERVE_REGISTRY=""
+LLMISVC_SCALING=""
 
 Help() {
    echo "KServe installation script"
@@ -37,8 +39,10 @@ Help() {
    echo "  --kserve-registry REG          Override image registry (kustomize only, e.g., quay.io/myuser)"
    echo "  --no-runtimes                   Skip installing ClusterServingRuntimes"
    echo "  --keda, -k                     Enable KEDA (standard mode only)"
+   echo "  --scaling MODE                 Autoscaling for LLMISvc: keda or hpa (requires --type llmisvc)"
    echo "  --deps-only, -d                Install dependencies only"
    echo "  --uninstall, -u                Uninstall all"
+   echo "  --ci                           CI mode (skip frozen install and LocalModel version checks)"
    echo ""
 }
 
@@ -88,12 +92,20 @@ while [[ $# -gt 0 ]]; do
       ENABLE_KEDA=true
       shift
       ;;
+    --scaling)
+      LLMISVC_SCALING="$2"
+      shift 2
+      ;;
     --deps-only|-d)
       DEPS_ONLY=true
       shift
       ;;
     --uninstall|-u)
       UNINSTALL=true
+      shift
+      ;;
+    --ci)
+      KSERVE_INSTALL_CI=true
       shift
       ;;
     *)
@@ -134,6 +146,7 @@ export INSTALL_LLMISVC_CONFIGS
 export SET_KSERVE_VERSION
 export SET_KSERVE_REGISTRY
 export USE_LOCAL_CHARTS
+export KSERVE_INSTALL_CI
 
 # Normalize mode: serverless/knative → Knative, raw/standard → Standard
 case "$MODE" in
@@ -144,9 +157,42 @@ esac
 
 export DEPLOYMENT_MODE="${NORMALIZED_MODE}"
 
+# Validate --scaling flag
+if [[ -n "$LLMISVC_SCALING" ]]; then
+  if [[ "$LLMISVC_SCALING" != "keda" && "$LLMISVC_SCALING" != "hpa" ]]; then
+    log_error "Invalid scaling mode: $LLMISVC_SCALING. Must be 'keda' or 'hpa'"
+    exit 1
+  fi
+  if ! is_positive "$ENABLE_LLMISVC"; then
+    log_error "--scaling requires --type llmisvc"
+    exit 1
+  fi
+fi
+
 # Validate dependencies
 is_positive "$USE_LOCAL_CHARTS" && [[ $INSTALL_METHOD != "helm" ]] && { log_error "Local chart requires helm mode"; exit 1; }
 [[ -n "${SET_KSERVE_REGISTRY}" && $INSTALL_METHOD != "kustomize" ]] && { log_error "--kserve-registry requires kustomize mode"; exit 1; }
+
+INSTALL_SCRIPT_DIR="${REPO_ROOT}/hack/setup/quick-install"
+USE_FROZEN_INSTALL=false
+# Use install/${VERSION}/ frozen scripts when installing a different release without a custom registry.
+# Requires --kserve-version, version != kserve-deps.env, no --kserve-registry, and install/${VERSION}/ on disk.
+# Skipped in --ci mode (e.g. image tag is a git SHA, not a release bundle).
+if ! is_positive "$KSERVE_INSTALL_CI" \
+  && [[ -n "${SET_KSERVE_VERSION}" && "${SET_KSERVE_VERSION}" != "${KSERVE_VERSION}" && -z "${SET_KSERVE_REGISTRY}" ]]; then
+  if [[ ! -d "${REPO_ROOT}/install/${SET_KSERVE_VERSION}" ]]; then
+    if [[ $INSTALL_METHOD == "helm" ]]; then
+      log_error "KServe Helm chart for ${SET_KSERVE_VERSION} is not found. Checkout a release version"
+    else
+      log_error "KServe Manifests for ${SET_KSERVE_VERSION} is not found. Checkout a release version"
+    fi
+    exit 1
+  fi
+  is_positive "$USE_LOCAL_CHARTS" && { log_error "Local charts are not supported with install/${SET_KSERVE_VERSION}/ scripts"; exit 1; }
+  INSTALL_SCRIPT_DIR="${REPO_ROOT}/install/${SET_KSERVE_VERSION}"
+  USE_FROZEN_INSTALL=true
+  log_info "Using frozen install scripts from install/${SET_KSERVE_VERSION}/"
+fi
 
 show_installation_plan() {
   echo ""
@@ -179,6 +225,11 @@ show_installation_plan() {
       llmisvc)
         echo "  • LLMIsvc"
         echo "    - Dependencies: Gateway API, LWS Operator, Envoy Gateway"
+        if [[ "${LLMISVC_SCALING}" == "keda" ]]; then
+          echo "    - Autoscaling: KEDA (Prometheus + KEDA + WVA)"
+        elif [[ "${LLMISVC_SCALING}" == "hpa" ]]; then
+          echo "    - Autoscaling: HPA (Prometheus + Prometheus Adapter + WVA)"
+        fi
         ! is_positive "$DEPS_ONLY" && is_positive "$INSTALL_LLMISVC_CONFIGS" && echo "    - With LLMIsvc Configs"
         ;;
     esac
@@ -194,6 +245,9 @@ uninstall_all() {
   local scripts=(
     "hack/setup/infra/manage.kserve-helm.sh"
     "hack/setup/infra/manage.kserve-kustomize.sh"
+    "hack/setup/infra/manage.wva-kustomize.sh"
+    "hack/setup/infra/manage.prometheus-adapter-helm.sh"
+    "hack/setup/infra/manage.prometheus-helm.sh"
     "hack/setup/infra/manage.keda-otel-addon-helm.sh"
     "hack/setup/infra/manage.opentelemetry-helm.sh"
     "hack/setup/infra/manage.keda-helm.sh"
@@ -213,6 +267,15 @@ uninstall_all() {
   log_success "All components uninstalled"
 }
 
+LOCALMODEL_MIN_VERSION="v0.21.0"
+if is_positive "$ENABLE_LOCALMODEL" && [[ -n "${SET_KSERVE_VERSION}" ]] && ! is_positive "$KSERVE_INSTALL_CI"; then
+  requested_version="${SET_KSERVE_VERSION:-${KSERVE_VERSION}}"
+  if ! version_gte "${requested_version}" "${LOCALMODEL_MIN_VERSION}"; then
+    log_error "LocalModel install requires KServe version >= ${LOCALMODEL_MIN_VERSION} (requested: ${requested_version})"
+    exit 1
+  fi
+fi
+
 if is_positive "$UNINSTALL"; then
   uninstall_all
   exit 0
@@ -228,21 +291,30 @@ install_dependencies() {
     case $type in
       kserve)
         if [[ $USER_MODE == "serverless" ]]; then
-          ${REPO_ROOT}/hack/setup/quick-install/kserve-knative-mode-dependency-install.sh
+          ${INSTALL_SCRIPT_DIR}/kserve-knative-mode-dependency-install.sh
         else
-          ${REPO_ROOT}/hack/setup/quick-install/kserve-standard-mode-dependency-install.sh
+          ${INSTALL_SCRIPT_DIR}/kserve-standard-mode-dependency-install.sh
         fi
 
         ;;
       llmisvc)
-        ${REPO_ROOT}/hack/setup/quick-install/llmisvc-dependency-install.sh
+        ${INSTALL_SCRIPT_DIR}/llmisvc-dependency-install.sh
         ;;
     esac
   done
 
   # Install KEDA dependencies if enabled
   if is_positive "${ENABLE_KEDA}"; then
-    ${REPO_ROOT}/hack/setup/quick-install/keda-dependency-install.sh
+    ${INSTALL_SCRIPT_DIR}/keda-dependency-install.sh
+  fi
+
+  # Install LLMISvc autoscaling dependencies if enabled
+  if [[ -n "${LLMISVC_SCALING}" ]]; then
+    if [[ "${LLMISVC_SCALING}" == "keda" ]]; then
+      ${INSTALL_SCRIPT_DIR}/llmisvc-autoscaling-keda-dependency-install.sh
+    else
+      ${INSTALL_SCRIPT_DIR}/llmisvc-autoscaling-hpa-dependency-install.sh
+    fi
   fi
 
   log_success "Dependencies installed"
@@ -259,10 +331,36 @@ fi
 # Install all enabled types together (single execution)
 if [[ ${#TYPES[@]} -gt 0 ]]; then
   log_info "Installing: ${TYPES[*]}..."
-  if [[ $INSTALL_METHOD == "helm" ]]; then
+  if is_positive "$USE_FROZEN_INSTALL"; then
+    # Frozen scripts embed kserve (or llmisvc) manifests only — localmodel needs kustomize.
+    if is_positive "$ENABLE_KSERVE"; then
+      if [[ $USER_MODE == "serverless" ]]; then
+        ENABLE_LOCALMODEL=false ${INSTALL_SCRIPT_DIR}/kserve-knative-mode-full-install-with-manifests.sh
+      else
+        ENABLE_LOCALMODEL=false ${INSTALL_SCRIPT_DIR}/kserve-standard-mode-full-install-with-manifests.sh
+      fi
+    fi
+    if is_positive "$ENABLE_LOCALMODEL"; then
+      log_info "Installing LocalModel via frozen manifests..."
+      ${INSTALL_SCRIPT_DIR}/localmodel-full-install-with-manifests.sh
+    fi
+    if is_positive "$ENABLE_LLMISVC"; then
+      ${INSTALL_SCRIPT_DIR}/llmisvc-full-install-with-manifests.sh
+    fi
+  elif [[ $INSTALL_METHOD == "helm" ]]; then
     ${REPO_ROOT}/hack/setup/infra/manage.kserve-helm.sh
   else
     ${REPO_ROOT}/hack/setup/infra/manage.kserve-kustomize.sh
+  fi
+
+  # Configure autoscaling settings in inferenceservice-config ConfigMap
+  if [[ -n "${LLMISVC_SCALING}" ]]; then
+    AUTOSCALING_PROM_URL="${WVA_PROMETHEUS_URL:-https://prometheus-kube-prometheus-prometheus.${PROMETHEUS_NAMESPACE:-monitoring}:9090}"
+    AUTOSCALING_PROM_UNSAFE_SSL="${WVA_PROMETHEUS_UNSAFE_SSL:-true}"
+    log_info "Configuring autoscaling-wva-controller-config with Prometheus URL: ${AUTOSCALING_PROM_URL}"
+    update_isvc_config \
+      "autoscaling-wva-controller-config.prometheus.url=${AUTOSCALING_PROM_URL}" \
+      "autoscaling-wva-controller-config.prometheus.unsafeSsl=${AUTOSCALING_PROM_UNSAFE_SSL}"
   fi
 
   log_success "Installation complete: ${TYPES[*]}"

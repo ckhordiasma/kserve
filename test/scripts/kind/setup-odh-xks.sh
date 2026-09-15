@@ -17,7 +17,8 @@
 #   GATEWAY_API_VERSION=v1.2.1
 #   KSERVE_NAMESPACE=opendatahub
 #   KO_DOCKER_REPO=local
-#   LLMISVC_CONTROLLER_IMG=llmisvc-controller:dev
+#   LLMISVC_CONTROLLER_IMG=llmisvc-controller
+#   IMAGE_TAG=dev
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -42,8 +43,14 @@ LWS_VERSION="${LWS_VERSION:-v0.6.2}"
 GATEWAY_API_VERSION="${GATEWAY_API_VERSION:-v1.4.1}"
 KSERVE_NAMESPACE="${KSERVE_NAMESPACE:-opendatahub}"
 KO_DOCKER_REPO="${KO_DOCKER_REPO:-local}"
-LLMISVC_CONTROLLER_IMG="${LLMISVC_CONTROLLER_IMG:-llmisvc-controller:dev}"
-KSERVE_CONTROLLER_IMAGE="${KO_DOCKER_REPO}/${LLMISVC_CONTROLLER_IMG}"
+# Image tag passed to the Makefile docker-build-* targets as TAG. Kept separate
+# from the image name: upstream recipes append ':${TAG}', so baking the tag into
+# the IMG var here would produce an invalid double tag (e.g. 'name:dev:latest').
+IMAGE_TAG="${IMAGE_TAG:-dev}"
+LLMISVC_CONTROLLER_IMG="${LLMISVC_CONTROLLER_IMG:-llmisvc-controller}"
+KSERVE_CONTROLLER_IMAGE="${KO_DOCKER_REPO}/${LLMISVC_CONTROLLER_IMG}:${IMAGE_TAG}"
+STORAGE_INIT_IMG="${STORAGE_INIT_IMG:-storage-initializer}"
+STORAGE_INIT_IMAGE="${KO_DOCKER_REPO}/${STORAGE_INIT_IMG}:${IMAGE_TAG}"
 
 # Determine script and project directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -207,8 +214,27 @@ install_cert_manager() {
   log_wait "Waiting for cert-manager to be ready..."
   wait_for_pods "cert-manager" "app in (cert-manager,webhook)" 180s
 
-  # Wait for webhook to be ready
-  sleep 5
+  # Wait for the webhook to accept requests -- pod readiness alone does not
+  # guarantee the API server trusts the webhook's self-signed CA.
+  log_wait "Waiting for cert-manager webhook to accept requests..."
+  local max_wait=60
+  local start=$SECONDS
+  while ! kubectl apply --dry-run=server -f - <<'PROBE' &>/dev/null; do
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: cert-manager-webhook-probe
+spec:
+  selfSigned: {}
+PROBE
+    if (( SECONDS - start >= max_wait )); then
+      log_error "Timed out after ${max_wait}s waiting for cert-manager webhook"
+      kubectl get validatingwebhookconfigurations -o wide || true
+      return 1
+    fi
+    log_wait "  cert-manager webhook not ready yet ($(( SECONDS - start ))s elapsed)..."
+    sleep 2
+  done
 
   log_success "cert-manager installed"
 }
@@ -311,13 +337,33 @@ build_and_load_controller() {
   log_wait "Running make docker-build-llmisvc..."
   make -C "${PROJECT_ROOT}" docker-build-llmisvc \
     KO_DOCKER_REPO="${KO_DOCKER_REPO}" \
-    LLMISVC_CONTROLLER_IMG="${LLMISVC_CONTROLLER_IMG}"
+    LLMISVC_CONTROLLER_IMG="${LLMISVC_CONTROLLER_IMG}" \
+    TAG="${IMAGE_TAG}"
 
   # Load image into KinD cluster
   log_wait "Loading image into KinD cluster..."
   kind load docker-image "${KSERVE_CONTROLLER_IMAGE}" --name "${KIND_CLUSTER_NAME}"
 
   log_success "Controller image built and loaded into KinD"
+}
+
+# -----------------------------------------------------------------------------
+# build_and_load_storage_initializer
+# Build storage-initializer image from source and load into KinD
+# -----------------------------------------------------------------------------
+build_and_load_storage_initializer() {
+  log_info "Building storage-initializer image '${STORAGE_INIT_IMAGE}'..."
+
+  log_wait "Running make docker-build-storageInitializer..."
+  make -C "${PROJECT_ROOT}" docker-build-storageInitializer \
+    KO_DOCKER_REPO="${KO_DOCKER_REPO}" \
+    STORAGE_INIT_IMG="${STORAGE_INIT_IMG}" \
+    TAG="${IMAGE_TAG}"
+
+  log_wait "Loading image into KinD cluster..."
+  kind load docker-image "${STORAGE_INIT_IMAGE}" --name "${KIND_CLUSTER_NAME}"
+
+  log_success "Storage-initializer image built and loaded into KinD"
 }
 
 # -----------------------------------------------------------------------------
@@ -470,6 +516,59 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
+# setup_seaweedfs_models
+# Deploy SeaweedFS and pre-cache opt-125m to avoid HuggingFace downloads
+# -----------------------------------------------------------------------------
+setup_seaweedfs_models() {
+  log_info "Deploying SeaweedFS for model caching..."
+
+  kubectl apply -f "${PROJECT_ROOT}/config/overlays/test/s3-local-backend/mlpipeline-s3-artifact-secret.yaml" -n "${KSERVE_NAMESPACE}"
+  kubectl apply -f "${PROJECT_ROOT}/config/overlays/test/s3-local-backend/seaweedfs-deployment.yaml" -n "${KSERVE_NAMESPACE}"
+  sed "s/namespace: seaweedfs/namespace: ${KSERVE_NAMESPACE}/" \
+    "${PROJECT_ROOT}/config/overlays/test/s3-local-backend/seaweedfs-service.yaml" | kubectl apply -n "${KSERVE_NAMESPACE}" -f -
+
+  log_wait "Waiting for SeaweedFS to be ready..."
+  kubectl rollout status deployment/seaweedfs -n "${KSERVE_NAMESPACE}" --timeout=120s
+
+  log_info "Pre-caching opt-125m model in SeaweedFS..."
+  kubectl delete job s3-init -n "${KSERVE_NAMESPACE}" --ignore-not-found
+  if [[ -n "${HF_TOKEN:-}" ]]; then
+    printf '%s' "${HF_TOKEN}" | kubectl create secret generic hf-token \
+      --from-file=token=/dev/stdin \
+      -n "${KSERVE_NAMESPACE}" \
+      --dry-run=client -o yaml | kubectl apply -f -
+  else
+    kubectl delete secret hf-token -n "${KSERVE_NAMESPACE}" --ignore-not-found
+  fi
+  sed -e "s|s3-service.kserve|s3-service.${KSERVE_NAMESPACE}|" \
+      -e "s|kserve/storage-initializer:latest|${STORAGE_INIT_IMAGE}|" \
+    "${PROJECT_ROOT}/test/overlays/openshift-ci/seaweedfs-init-job-odh.yaml" | \
+    kubectl apply -n "${KSERVE_NAMESPACE}" -f -
+
+  log_wait "Waiting for S3 init job to be created..."
+  for _ in $(seq 1 30); do
+    if kubectl get job s3-init -n "${KSERVE_NAMESPACE}" &>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  if ! kubectl get job s3-init -n "${KSERVE_NAMESPACE}" &>/dev/null; then
+    log_error "S3 init job was not created"
+    return 1
+  fi
+
+  log_wait "Waiting for S3 init job to complete (downloading model)..."
+  if ! kubectl wait --for=condition=complete --timeout=300s job/s3-init -n "${KSERVE_NAMESPACE}"; then
+    log_error "S3 init job failed. Pod status and logs:"
+    kubectl get pods -l job-name=s3-init -n "${KSERVE_NAMESPACE}"
+    kubectl logs -l job-name=s3-init -n "${KSERVE_NAMESPACE}" --all-containers --tail=50 || true
+    return 1
+  fi
+
+  log_success "SeaweedFS deployed and opt-125m model cached"
+}
+
+# -----------------------------------------------------------------------------
 # create_test_namespace
 # Create the E2E test namespace for running tests
 # -----------------------------------------------------------------------------
@@ -477,6 +576,19 @@ create_test_namespace() {
   log_info "Creating E2E test namespace..."
 
   kubectl create namespace kserve-ci-e2e-test --dry-run=client -o yaml | kubectl apply -f -
+
+  log_info "Configuring S3 credentials in test namespace..."
+  sed "s/s3-service.kserve/s3-service.${KSERVE_NAMESPACE}/" \
+    "${PROJECT_ROOT}/test/overlays/openshift-ci/seaweedfs-s3-creds-secret.yaml" | \
+    kubectl apply -n kserve-ci-e2e-test -f -
+  kubectl patch serviceaccount default -n kserve-ci-e2e-test \
+    --type=merge -p='{"secrets": [{"name": "seaweedfs-s3-creds"}]}'
+
+  # The ODH overlay configures s3CABundleConfigMap="odh-kserve-custom-ca-bundle" in the
+  # storage config. When using s3:// URIs, the controller injects a mandatory volume
+  # referencing this ConfigMap. Create it empty so pods can start on Kind.
+  kubectl create configmap odh-kserve-custom-ca-bundle -n kserve-ci-e2e-test \
+    --dry-run=client -o yaml | kubectl apply -f -
 
   log_success "E2E test namespace 'kserve-ci-e2e-test' created"
 }
@@ -554,16 +666,40 @@ main() {
   # 8. Build and load controller image
   build_and_load_controller
 
-  # 9. Deploy odh-xks overlay (requires cert-manager PKI)
-  deploy_odh_xks
+  # 8b. Build and load storage-initializer image
+  build_and_load_storage_initializer
 
-  # 10. Setup CA bundle ConfigMap (must be before Gateway as Gateway references it)
+  # 9. Deploy odh-xks overlay (requires cert-manager PKI)
+  if [[ "${SKIP_DEPLOY:-false}" != "true" ]]; then
+    deploy_odh_xks
+
+    # 9b. Override storage-initializer image to use locally-built image
+    log_info "Patching inferenceservice-config to use locally-built storage-initializer '${STORAGE_INIT_IMAGE}'..."
+    kubectl get configmap inferenceservice-config -n "${KSERVE_NAMESPACE}" -o json \
+      | python3 -c "
+import json, sys
+cm = json.load(sys.stdin)
+si = json.loads(cm['data']['storageInitializer'])
+si['image'] = '${STORAGE_INIT_IMAGE}'
+cm['data']['storageInitializer'] = json.dumps(si)
+json.dump(cm, sys.stdout)
+" | kubectl apply -f -
+    log_success "Storage-initializer image overridden to '${STORAGE_INIT_IMAGE}'"
+  else
+    log_info "SKIP_DEPLOY is set -- skipping deploy_odh_xks and storage-init patch"
+    kubectl create namespace "${KSERVE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+  fi
+
+  # 10. Deploy SeaweedFS and pre-cache opt-125m model
+  setup_seaweedfs_models
+
+  # 11. Setup CA bundle ConfigMap (must be before Gateway as Gateway references it)
   setup_ca_bundle
 
-  # 11. Create Gateway resources
+  # 12. Create Gateway resources
   create_gateway
 
-  # 12. Create E2E test namespace
+  # 13. Create E2E test namespace
   create_test_namespace
 
   # Print verification steps

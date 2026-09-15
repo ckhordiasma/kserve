@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Copyright 2022 The KServe Authors.
 #
@@ -40,13 +40,31 @@ export GITHUB_SHA="${TAG:-latest}"
 echo "Starting E2E functional tests ..."
 MARKER="${1:-}"
 PARALLELISM="${2:-1}"
-NETWORK_LAYER="${3:-'istio'}"
+NETWORK_LAYER="${3:-istio}"
+
+: "${SKIP_DELETION_ON_FAILURE:=true}"
+export SKIP_DELETION_ON_FAILURE
 
 echo "Parallelism requested for pytest is ${PARALLELISM}"
 
+MAXFAIL="${PYTEST_MAXFAIL:-5}"
+
 source python/kserve/.venv/bin/activate
 
-PYTEST_COMMON_ARGS=(--ignore=qpext --log-cli-level=INFO -n "$PARALLELISM" --dist worksteal --network-layer "$NETWORK_LAYER" -vv --tb=long -s)
+REPORT_DIR="${ARTIFACT_DIR:-/tmp}"
+mkdir -p "$REPORT_DIR"
+
+# Derive a filesystem-safe slug from the marker expression so that multiple
+# invocations within the same job produce distinct result files instead of
+# clobbering each other.  When no marker is given the suffix is empty,
+# preserving the original filenames for single-invocation jobs.
+if [[ -n "$MARKER" ]]; then
+  REPORT_SUFFIX="-$(echo "$MARKER" | tr ' ()' '_' | tr -cs '[:alnum:]_-' '_' | sed 's/_$//')"
+else
+  REPORT_SUFFIX=""
+fi
+
+PYTEST_COMMON_ARGS=(--ignore=qpext --log-cli-level=INFO -n "$PARALLELISM" --dist worksteal --network-layer "$NETWORK_LAYER" --maxfail="$MAXFAIL" -vv --tb=long -s --junitxml="$REPORT_DIR/junit_e2e${REPORT_SUFFIX}.xml" --json-report --json-report-file="$REPORT_DIR/e2e_results${REPORT_SUFFIX}.json" --json-report-omit=log)
 
 MARKER_ARGS=()
 if [[ -n "$MARKER" ]]; then

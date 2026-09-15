@@ -32,6 +32,7 @@ import (
 
 	"github.com/kserve/kserve/pkg/apis/serving/v1alpha2"
 	"github.com/kserve/kserve/pkg/utils"
+	kservevalidation "github.com/kserve/kserve/pkg/validation"
 )
 
 // +kubebuilder:webhook:path=/validate-serving-kserve-io-v1alpha1-llminferenceservice,mutating=false,failurePolicy=fail,sideEffects=None,groups=serving.kserve.io,resources=llminferenceservices,verbs=create;update,versions=v1alpha1,name=llminferenceservice.kserve-webhook-server.v1alpha1.validator,admissionReviewVersions=v1
@@ -70,6 +71,9 @@ func (l *LLMInferenceServiceValidator) ValidateUpdate(ctx context.Context, oldOb
 	if err != nil {
 		return warnings, err
 	}
+	if llmSvc.GetDeletionTimestamp() != nil {
+		return warnings, nil
+	}
 
 	return warnings, l.validate(ctx, prev, llmSvc)
 }
@@ -86,9 +90,13 @@ func (l *LLMInferenceServiceValidator) validate(ctx context.Context, prev *LLMIn
 	var allErrs field.ErrorList
 
 	allErrs = append(allErrs, l.validateRouterCrossFieldConstraints(llmSvc)...)
+	allErrs = append(allErrs, l.validateTrafficFields(llmSvc)...)
 	allErrs = append(allErrs, l.validateParallelismConstraints(llmSvc)...)
 	allErrs = append(allErrs, l.validateSchedulerConfig(llmSvc)...)
 	allErrs = append(allErrs, l.validateScaling(llmSvc)...)
+	allErrs = append(allErrs, l.validateRolloutStrategy(llmSvc)...)
+	allErrs = append(allErrs, l.validateLoRAAdapters(llmSvc)...)
+	allErrs = append(allErrs, kservevalidation.ValidateManagedDRAAnnotations(llmSvc.GetAnnotations())...)
 	allErrs = append(allErrs, l.validateImmutable(prev, llmSvc)...)
 
 	if len(allErrs) == 0 {
@@ -371,8 +379,87 @@ func (l *LLMInferenceServiceValidator) validateWorkloadScaling(basePath *field.P
 	return v1alpha2.ValidateWorkloadScaling(basePath, &w)
 }
 
+func (l *LLMInferenceServiceValidator) validateRolloutStrategy(llmSvc *LLMInferenceService) field.ErrorList {
+	var allErrs field.ErrorList
+
+	isMultiNode := llmSvc.Spec.Worker != nil
+	w := convertWorkloadSpecToV1Alpha2(&llmSvc.Spec.WorkloadSpec)
+	allErrs = append(allErrs, v1alpha2.ValidateWorkloadRolloutFields(field.NewPath("spec"), w.RolloutStrategy, isMultiNode)...)
+
+	if llmSvc.Spec.Prefill != nil {
+		prefillMultiNode := llmSvc.Spec.Prefill.Worker != nil
+		p := convertWorkloadSpecToV1Alpha2(llmSvc.Spec.Prefill)
+		allErrs = append(allErrs, v1alpha2.ValidateWorkloadRolloutFields(field.NewPath("spec").Child("prefill"), p.RolloutStrategy, prefillMultiNode)...)
+	}
+
+	return allErrs
+}
+
+func (l *LLMInferenceServiceValidator) validateLoRAAdapters(llmSvc *LLMInferenceService) field.ErrorList {
+	if llmSvc.Spec.Model.LoRA == nil {
+		return nil
+	}
+	hub := convertLoRASpecToV1Alpha2(llmSvc.Spec.Model.LoRA)
+	return v1alpha2.ValidateLoRAAdapters(hub, ptr.Deref(llmSvc.Spec.Model.Name, llmSvc.Name), field.NewPath("spec", "model", "lora"))
+}
+
 // immutable returns a *Error indicating "unsupported mutation".
 // This is used to report unsupported mutation of values.
 func immutable(path *field.Path, value interface{}, detail string) *field.Error {
 	return &field.Error{Type: field.ErrorTypeNotSupported, Field: path.String(), BadValue: value, Detail: detail}
+}
+
+func (l *LLMInferenceServiceValidator) validateTrafficFields(
+	llmSvc *LLMInferenceService,
+) field.ErrorList {
+	router := llmSvc.Spec.Router
+	if router == nil || router.Route == nil {
+		return nil
+	}
+
+	route := router.Route
+	routePath := field.NewPath("spec", "router", "route")
+	var allErrs field.ErrorList
+
+	hasGroup := route.Group != nil
+	hasWeight := route.Weight != nil
+
+	if !hasGroup && !hasWeight {
+		return nil
+	}
+
+	if router.Ingress != nil {
+		return field.ErrorList{field.Invalid(
+			routePath.Child("group"),
+			ptr.Deref(route.Group, ""),
+			"traffic splitting requires Gateway API routing; the controller manages HTTPRoutes, not Ingress resources",
+		)}
+	}
+
+	if hasWeight && !hasGroup {
+		allErrs = append(allErrs, field.Required(
+			routePath.Child("group"),
+			"weight requires group",
+		))
+	}
+	if hasGroup && !hasWeight {
+		allErrs = append(allErrs, field.Required(
+			routePath.Child("weight"),
+			"group requires weight",
+		))
+	}
+
+	if len(allErrs) > 0 {
+		return allErrs
+	}
+
+	if route.HTTP != nil && route.HTTP.HasRefs() {
+		allErrs = append(allErrs, field.Invalid(
+			routePath.Child("group"),
+			*route.Group,
+			"traffic splitting cannot be used with custom HTTPRoute refs; controller-managed routes (route.http.spec or route.http: {}) are required",
+		))
+	}
+
+	return allErrs
 }

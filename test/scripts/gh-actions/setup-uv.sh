@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Copyright 2023 The KServe Authors.
 #
@@ -34,3 +34,4 @@ fi
 echo "Creating virtual environment..."
 uv venv --clear
 source .venv/bin/activate
+

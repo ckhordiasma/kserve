@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -104,7 +105,7 @@ func getRawServiceHost(isvc *v1beta1.InferenceService) string {
 		transformerName := constants.TransformerServiceName(isvc.Name)
 		return network.GetServiceHostname(transformerName, isvc.Namespace)
 	}
-	predictorName := constants.PredictorServiceName(isvc.Name)
+	predictorName := constants.PredictorServiceName(isvc.Name, isvc.Spec.Predictor.Name)
 	return network.GetServiceHostname(predictorName, isvc.Namespace)
 }
 
@@ -130,6 +131,88 @@ func addIsvcHeaders(name string, namespace string) gwapiv1.HTTPRouteFilter {
 					Name:  constants.IsvcNamespaceHeader,
 					Value: namespace,
 				},
+			},
+		},
+	}
+}
+
+// detectServiceProtocolPorts queries the Service to extract protocol port information.
+// It analyzes the service ports to identify REST and gRPC ports based on appProtocol annotations
+// and port names. Only the first port of each type is detected and returned.
+// Returns the REST port, gRPC port, and any error encountered.
+func detectServiceProtocolPorts(ctx context.Context, client client.Client, serviceName, namespace string) (restPort, grpcPort int32, err error) {
+	// Query the Service
+	svc := &corev1.Service{}
+	err = client.Get(ctx, types.NamespacedName{
+		Name:      serviceName,
+		Namespace: namespace,
+	}, svc)
+	if err != nil {
+		// Service may not exist yet in early reconciliation paths. In that case, gracefully fall back to default routing.
+		if apierr.IsNotFound(err) {
+			return 0, 0, nil
+		}
+		return 0, 0, err
+	}
+
+	// Analyze ports to identify REST and gRPC
+	for _, port := range svc.Spec.Ports {
+		// Check if this is a gRPC port based on appProtocol or port name
+		switch {
+		case port.AppProtocol != nil && *port.AppProtocol == "kubernetes.io/h2c":
+			if grpcPort == 0 {
+				grpcPort = port.Port
+			}
+		case isGrpcPortByName(port.Name):
+			if grpcPort == 0 {
+				grpcPort = port.Port
+			}
+		default:
+			// HTTP port
+			if restPort == 0 {
+				restPort = port.Port
+			}
+		}
+	}
+	return restPort, grpcPort, nil
+}
+
+// isGrpcPortByName checks if a port name indicates gRPC protocol
+func isGrpcPortByName(portName string) bool {
+	portNameLower := strings.ToLower(portName)
+	return strings.Contains(portNameLower, "grpc") || strings.Contains(portNameLower, "h2c")
+}
+
+// createGRPCRouteMatches creates HTTPRouteMatch entries that match gRPC requests
+// gRPC requests are identified by:
+// 1. Path: /inference.GRPCInferenceService/* (gRPC v2 protocol)
+// 2. Content-Type: application/grpc* (includes application/grpc+proto, application/grpc+json)
+func createGRPCRouteMatches() []gwapiv1.HTTPRouteMatch {
+	return []gwapiv1.HTTPRouteMatch{
+		{
+			Path: &gwapiv1.HTTPPathMatch{
+				Type:  ptr.To(gwapiv1.PathMatchRegularExpression),
+				Value: ptr.To("^/inference\\.GRPCInferenceService/.*$"),
+			},
+			Headers: []gwapiv1.HTTPHeaderMatch{
+				{
+					Type:  ptr.To(gwapiv1.HeaderMatchRegularExpression),
+					Name:  gwapiv1.HTTPHeaderName("content-type"),
+					Value: "^application/grpc.*",
+				},
+			},
+		},
+	}
+}
+
+// createHTTPRouteMatches creates HTTPRouteMatch entries that match HTTP/REST requests
+// This matches all requests that are NOT gRPC (no content-type restriction for broader compatibility)
+func createHTTPRouteMatches(pathPrefix string) []gwapiv1.HTTPRouteMatch {
+	return []gwapiv1.HTTPRouteMatch{
+		{
+			Path: &gwapiv1.HTTPPathMatch{
+				Type:  ptr.To(gwapiv1.PathMatchRegularExpression),
+				Value: ptr.To(pathPrefix),
 			},
 		},
 	}
@@ -166,10 +249,10 @@ func createHTTPRouteRule(routeMatches []gwapiv1.HTTPRouteMatch, filters []gwapiv
 	return rule
 }
 
-func createRawPredictorHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *v1beta1.IngressConfig,
+func createRawPredictorHTTPRoute(ctx context.Context, client client.Client, isvc *v1beta1.InferenceService, ingressConfig *v1beta1.IngressConfig,
 	isvcConfig *v1beta1.InferenceServicesConfig,
 ) (*gwapiv1.HTTPRoute, error) {
-	httpRouteRules := make([]gwapiv1.HTTPRouteRule, 0, 1)
+	httpRouteRules := make([]gwapiv1.HTTPRouteRule, 0, 2)
 	allowedHosts := make([]gwapiv1.Hostname, 0, 1)
 
 	if !isvc.Status.IsConditionReady(v1beta1.PredictorReady) {
@@ -180,20 +263,42 @@ func createRawPredictorHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *
 		})
 		return nil, nil
 	}
-	predictorName := constants.PredictorServiceName(isvc.Name)
+	// The route name and hostname use a stable name (without predictor.name) so
+	// they don't change on canary promotion. Backend refs use the actual service name.
+	routeName := constants.PredictorServiceName(isvc.Name)
+	predictorName := constants.PredictorServiceName(isvc.Name, isvc.Spec.Predictor.Name)
 
 	// Add isvc name and namespace headers
 	filters := []gwapiv1.HTTPRouteFilter{addIsvcHeaders(isvc.Name, isvc.Namespace)}
 
 	// Add predictor host rules
-	predictorHost, err := GenerateDomainName(predictorName, isvc.ObjectMeta, ingressConfig)
+	predictorHost, err := GenerateDomainName(routeName, isvc.ObjectMeta, ingressConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate predictor ingress host: %w", err)
 	}
 	allowedHosts = append(allowedHosts, gwapiv1.Hostname(predictorHost))
-	routeMatch := []gwapiv1.HTTPRouteMatch{createHTTPRouteMatch(constants.FallbackPrefix())}
 	timeout := resolveTimeout(ingressConfig.DisableHTTPRouteTimeout, isvc.Spec.Predictor.TimeoutSeconds)
-	httpRouteRules = append(httpRouteRules, createHTTPRouteRule(routeMatch, filters, predictorName, isvc.Namespace, constants.CommonDefaultHttpPort, timeout))
+
+	// Detect dual-protocol configuration
+	restPort, grpcPort, err := detectServiceProtocolPorts(ctx, client, predictorName, isvc.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect protocol ports for predictor service: %w", err)
+	}
+
+	if grpcPort != 0 && restPort != 0 {
+		// Generate separate rules for gRPC and HTTP with header-based matching
+		// gRPC rule FIRST (more specific - matches Content-Type: application/grpc* and gRPC path)
+		grpcMatches := createGRPCRouteMatches()
+		httpRouteRules = append(httpRouteRules, createHTTPRouteRule(grpcMatches, filters, predictorName, isvc.Namespace, grpcPort, timeout))
+
+		// HTTP rule SECOND (fallback - matches all other requests)
+		httpMatches := createHTTPRouteMatches(constants.FallbackPrefix())
+		httpRouteRules = append(httpRouteRules, createHTTPRouteRule(httpMatches, filters, predictorName, isvc.Namespace, restPort, timeout))
+	} else {
+		// Fall back to old default behavior
+		routeMatch := []gwapiv1.HTTPRouteMatch{createHTTPRouteMatch(constants.FallbackPrefix())}
+		httpRouteRules = append(httpRouteRules, createHTTPRouteRule(routeMatch, filters, predictorName, isvc.Namespace, constants.CommonDefaultHttpPort, timeout))
+	}
 
 	annotations := utils.Filter(isvc.Annotations, func(key string) bool {
 		return !utils.Includes(isvcConfig.ServiceAnnotationDisallowedList, key)
@@ -204,7 +309,7 @@ func createRawPredictorHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *
 	gatewaySlice := strings.Split(ingressConfig.KserveIngressGateway, "/")
 	httpRoute := gwapiv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        constants.PredictorServiceName(isvc.Name),
+			Name:        routeName,
 			Namespace:   isvc.Namespace,
 			Annotations: annotations,
 			Labels:      labels,
@@ -224,13 +329,16 @@ func createRawPredictorHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *
 			},
 		},
 	}
+	if len(isvc.Spec.Canary) > 0 {
+		applyCanaryWeights(isvc, &httpRoute)
+	}
 	return &httpRoute, nil
 }
 
-func createRawTransformerHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *v1beta1.IngressConfig,
+func createRawTransformerHTTPRoute(ctx context.Context, client client.Client, isvc *v1beta1.InferenceService, ingressConfig *v1beta1.IngressConfig,
 	isvcConfig *v1beta1.InferenceServicesConfig,
 ) (*gwapiv1.HTTPRoute, error) {
-	httpRouteRules := make([]gwapiv1.HTTPRouteRule, 0, 1)
+	httpRouteRules := make([]gwapiv1.HTTPRouteRule, 0, 2)
 	allowedHosts := make([]gwapiv1.Hostname, 0, 1)
 
 	if !isvc.Status.IsConditionReady(v1beta1.TransformerReady) {
@@ -251,10 +359,27 @@ func createRawTransformerHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig
 		return nil, fmt.Errorf("failed to generate transformer ingress host: %w", err)
 	}
 	allowedHosts = append(allowedHosts, gwapiv1.Hostname(transformerHost))
-	routeMatch := []gwapiv1.HTTPRouteMatch{createHTTPRouteMatch(constants.FallbackPrefix())}
 	timeout := resolveTimeout(ingressConfig.DisableHTTPRouteTimeout, isvc.Spec.Transformer.TimeoutSeconds)
-	httpRouteRules = append(httpRouteRules, createHTTPRouteRule(routeMatch, filters, transformerName, isvc.Namespace,
-		constants.CommonDefaultHttpPort, timeout))
+	// Detect dual-protocol configuration
+	restPort, grpcPort, err := detectServiceProtocolPorts(ctx, client, transformerName, isvc.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect protocol ports for transformer service: %w", err)
+	}
+
+	if grpcPort != 0 && restPort != 0 {
+		// Generate separate rules for gRPC and HTTP with header-based matching
+		// gRPC rule FIRST (more specific - matches Content-Type: application/grpc* and gRPC path)
+		grpcMatches := createGRPCRouteMatches()
+		httpRouteRules = append(httpRouteRules, createHTTPRouteRule(grpcMatches, filters, transformerName, isvc.Namespace, grpcPort, timeout))
+
+		// HTTP rule SECOND (fallback - matches all other requests)
+		httpMatches := createHTTPRouteMatches(constants.FallbackPrefix())
+		httpRouteRules = append(httpRouteRules, createHTTPRouteRule(httpMatches, filters, transformerName, isvc.Namespace, restPort, timeout))
+	} else {
+		// Fall back to old default behavior
+		routeMatch := []gwapiv1.HTTPRouteMatch{createHTTPRouteMatch(constants.FallbackPrefix())}
+		httpRouteRules = append(httpRouteRules, createHTTPRouteRule(routeMatch, filters, transformerName, isvc.Namespace, constants.CommonDefaultHttpPort, timeout))
+	}
 
 	annotations := utils.Filter(isvc.Annotations, func(key string) bool {
 		return !utils.Includes(isvcConfig.ServiceAnnotationDisallowedList, key)
@@ -288,10 +413,10 @@ func createRawTransformerHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig
 	return &httpRoute, nil
 }
 
-func createRawExplainerHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *v1beta1.IngressConfig,
+func createRawExplainerHTTPRoute(ctx context.Context, client client.Client, isvc *v1beta1.InferenceService, ingressConfig *v1beta1.IngressConfig,
 	isvcConfig *v1beta1.InferenceServicesConfig,
 ) (*gwapiv1.HTTPRoute, error) {
-	httpRouteRules := make([]gwapiv1.HTTPRouteRule, 0, 1)
+	httpRouteRules := make([]gwapiv1.HTTPRouteRule, 0, 2)
 	allowedHosts := make([]gwapiv1.Hostname, 0, 1)
 
 	if !isvc.Status.IsConditionReady(v1beta1.ExplainerReady) {
@@ -314,10 +439,28 @@ func createRawExplainerHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *
 	allowedHosts = append(allowedHosts, gwapiv1.Hostname(explainerHost))
 
 	// Add explainer host rules
-	routeMatch := []gwapiv1.HTTPRouteMatch{createHTTPRouteMatch(constants.FallbackPrefix())}
 	timeout := resolveTimeout(ingressConfig.DisableHTTPRouteTimeout, isvc.Spec.Explainer.TimeoutSeconds)
-	httpRouteRules = append(httpRouteRules, createHTTPRouteRule(routeMatch, filters, explainerName, isvc.Namespace,
-		constants.CommonDefaultHttpPort, timeout))
+
+	// Detect dual-protocol configuration
+	restPort, grpcPort, err := detectServiceProtocolPorts(ctx, client, explainerName, isvc.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect protocol ports for explainer service: %w", err)
+	}
+
+	if grpcPort != 0 && restPort != 0 {
+		// Generate separate rules for gRPC and HTTP with header-based matching
+		// gRPC rule FIRST (more specific - matches Content-Type: application/grpc* and gRPC path)
+		grpcMatches := createGRPCRouteMatches()
+		httpRouteRules = append(httpRouteRules, createHTTPRouteRule(grpcMatches, filters, explainerName, isvc.Namespace, grpcPort, timeout))
+
+		// HTTP rule SECOND (fallback - matches all other requests)
+		httpMatches := createHTTPRouteMatches(constants.FallbackPrefix())
+		httpRouteRules = append(httpRouteRules, createHTTPRouteRule(httpMatches, filters, explainerName, isvc.Namespace, restPort, timeout))
+	} else {
+		// Fall back to old default behavior
+		routeMatch := []gwapiv1.HTTPRouteMatch{createHTTPRouteMatch(constants.FallbackPrefix())}
+		httpRouteRules = append(httpRouteRules, createHTTPRouteRule(routeMatch, filters, explainerName, isvc.Namespace, constants.CommonDefaultHttpPort, timeout))
+	}
 
 	annotations := utils.Filter(isvc.Annotations, func(key string) bool {
 		return !utils.Includes(isvcConfig.ServiceAnnotationDisallowedList, key)
@@ -351,10 +494,10 @@ func createRawExplainerHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *
 	return &httpRoute, nil
 }
 
-func createRawTopLevelHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *v1beta1.IngressConfig,
+func createRawTopLevelHTTPRoute(ctx context.Context, client client.Client, isvc *v1beta1.InferenceService, ingressConfig *v1beta1.IngressConfig,
 	isvcConfig *v1beta1.InferenceServicesConfig,
 ) (*gwapiv1.HTTPRoute, error) {
-	httpRouteRules := make([]gwapiv1.HTTPRouteRule, 0, 1)
+	httpRouteRules := make([]gwapiv1.HTTPRouteRule, 0, 2)
 	allowedHosts := make([]gwapiv1.Hostname, 0, 1)
 
 	if !isvc.Status.IsConditionReady(v1beta1.PredictorReady) {
@@ -365,7 +508,7 @@ func createRawTopLevelHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *v
 		})
 		return nil, nil
 	}
-	predictorName := constants.PredictorServiceName(isvc.Name)
+	predictorName := constants.PredictorServiceName(isvc.Name, isvc.Spec.Predictor.Name)
 	transformerName := constants.TransformerServiceName(isvc.Name)
 	explainerName := constants.ExplainerServiceName(isvc.Name)
 
@@ -421,14 +564,52 @@ func createRawTopLevelHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *v
 		}
 		timeout := resolveTimeout(ingressConfig.DisableHTTPRouteTimeout, isvc.Spec.Transformer.TimeoutSeconds)
 		// :predict routes to the transformer when there are both predictor and transformer
-		routeMatch := []gwapiv1.HTTPRouteMatch{createHTTPRouteMatch(constants.FallbackPrefix())}
-		httpRouteRules = append(httpRouteRules, createHTTPRouteRule(routeMatch, filters, transformerName, isvc.Namespace, constants.CommonDefaultHttpPort, timeout))
+
+		// Detect dual-protocol for transformer
+		restPort, grpcPort, err := detectServiceProtocolPorts(ctx, client, transformerName, isvc.Namespace)
+		if err != nil {
+			return nil, fmt.Errorf("failed to detect protocol ports for transformer service: %w", err)
+		}
+
+		if grpcPort != 0 && restPort != 0 {
+			// Generate separate rules for gRPC and HTTP with header-based matching
+			// gRPC rule FIRST (more specific - matches Content-Type: application/grpc* and gRPC path)
+			grpcMatches := createGRPCRouteMatches()
+			httpRouteRules = append(httpRouteRules, createHTTPRouteRule(grpcMatches, filters, transformerName, isvc.Namespace, grpcPort, timeout))
+
+			// HTTP rule SECOND (fallback - matches all other requests)
+			httpMatches := createHTTPRouteMatches(constants.FallbackPrefix())
+			httpRouteRules = append(httpRouteRules, createHTTPRouteRule(httpMatches, filters, transformerName, isvc.Namespace, restPort, timeout))
+		} else {
+			// Fall back to old default behavior
+			routeMatch := []gwapiv1.HTTPRouteMatch{createHTTPRouteMatch(constants.FallbackPrefix())}
+			httpRouteRules = append(httpRouteRules, createHTTPRouteRule(routeMatch, filters, transformerName, isvc.Namespace, constants.CommonDefaultHttpPort, timeout))
+		}
 	} else {
 		// Scenario: When predictor without transformer and with/without explainer present
 		timeout := resolveTimeout(ingressConfig.DisableHTTPRouteTimeout, isvc.Spec.Predictor.TimeoutSeconds)
 		// Add toplevel host rules for predictor which routes all traffic to predictor
-		routeMatch := []gwapiv1.HTTPRouteMatch{createHTTPRouteMatch(constants.FallbackPrefix())}
-		httpRouteRules = append(httpRouteRules, createHTTPRouteRule(routeMatch, filters, predictorName, isvc.Namespace, constants.CommonDefaultHttpPort, timeout))
+
+		// Detect dual-protocol for predictor
+		restPort, grpcPort, err := detectServiceProtocolPorts(ctx, client, predictorName, isvc.Namespace)
+		if err != nil {
+			return nil, fmt.Errorf("failed to detect protocol ports for predictor service: %w", err)
+		}
+
+		if grpcPort != 0 && restPort != 0 {
+			// Generate separate rules for gRPC and HTTP with header-based matching
+			// gRPC rule FIRST (more specific - matches Content-Type: application/grpc* and gRPC path)
+			grpcMatches := createGRPCRouteMatches()
+			httpRouteRules = append(httpRouteRules, createHTTPRouteRule(grpcMatches, filters, predictorName, isvc.Namespace, grpcPort, timeout))
+
+			// HTTP rule SECOND (fallback - matches all other requests)
+			httpMatches := createHTTPRouteMatches(constants.FallbackPrefix())
+			httpRouteRules = append(httpRouteRules, createHTTPRouteRule(httpMatches, filters, predictorName, isvc.Namespace, restPort, timeout))
+		} else {
+			// Fall back to old default behavior
+			routeMatch := []gwapiv1.HTTPRouteMatch{createHTTPRouteMatch(constants.FallbackPrefix())}
+			httpRouteRules = append(httpRouteRules, createHTTPRouteRule(routeMatch, filters, predictorName, isvc.Namespace, constants.CommonDefaultHttpPort, timeout))
+		}
 	}
 
 	// Add path based routing rules
@@ -494,13 +675,94 @@ func createRawTopLevelHTTPRoute(isvc *v1beta1.InferenceService, ingressConfig *v
 			},
 		},
 	}
+	if len(isvc.Spec.Canary) > 0 {
+		applyCanaryWeights(isvc, &httpRoute)
+	}
 	return &httpRoute, nil
 }
 
+// applyCanaryWeights modifies the HTTPRoute's backend refs to include weighted
+// backends for canary traffic splitting. Only canaries whose deployments are
+// Ready (as reported in isvc.Status.CanaryStatuses) receive traffic; not-ready
+// canaries are omitted so no traffic is routed to a backend without ready
+// endpoints.
+func applyCanaryWeights(isvc *v1beta1.InferenceService, httpRoute *gwapiv1.HTTPRoute) {
+	readyMap := make(map[string]bool, len(isvc.Status.CanaryStatuses))
+	for _, cs := range isvc.Status.CanaryStatuses {
+		readyMap[cs.Name] = cs.Ready
+	}
+
+	var totalReadyCanaryPercent int32
+	for _, canary := range isvc.Spec.Canary {
+		if readyMap[canary.Predictor.Name] {
+			totalReadyCanaryPercent += canary.TrafficPercent
+		}
+	}
+	stableWeight := int32(100) - totalReadyCanaryPercent
+
+	predictorName := constants.PredictorServiceName(isvc.Name, isvc.Spec.Predictor.Name)
+	for i := range httpRoute.Spec.Rules {
+		rule := &httpRoute.Spec.Rules[i]
+		if len(rule.BackendRefs) == 0 {
+			continue
+		}
+
+		template := rule.BackendRefs[0]
+		if string(template.Name) != predictorName {
+			continue
+		}
+		weightedBackends := make([]gwapiv1.HTTPBackendRef, 0, 1+len(isvc.Spec.Canary))
+
+		sw := stableWeight
+		stable := gwapiv1.HTTPBackendRef{
+			BackendRef: gwapiv1.BackendRef{
+				BackendObjectReference: template.BackendObjectReference,
+				Weight:                 &sw,
+			},
+		}
+		weightedBackends = append(weightedBackends, stable)
+
+		for _, canary := range isvc.Spec.Canary {
+			if !readyMap[canary.Predictor.Name] {
+				continue
+			}
+			canaryServiceName := constants.PredictorServiceName(isvc.Name, canary.Predictor.Name)
+			cw := canary.TrafficPercent
+			backend := gwapiv1.HTTPBackendRef{
+				BackendRef: gwapiv1.BackendRef{
+					BackendObjectReference: gwapiv1.BackendObjectReference{
+						Kind:      template.Kind,
+						Name:      gwapiv1.ObjectName(canaryServiceName),
+						Namespace: template.Namespace,
+						Port:      template.Port,
+					},
+					Weight: &cw,
+				},
+			}
+			weightedBackends = append(weightedBackends, backend)
+		}
+
+		rule.BackendRefs = weightedBackends
+	}
+}
+
 func semanticHttpRouteEquals(desired, existing *gwapiv1.HTTPRoute) bool {
-	return equality.Semantic.DeepDerivative(desired.Spec, existing.Spec) &&
-		equality.Semantic.DeepDerivative(desired.Labels, existing.Labels) &&
-		equality.Semantic.DeepDerivative(desired.Annotations, existing.Annotations)
+	if !equality.Semantic.DeepDerivative(desired.Labels, existing.Labels) ||
+		!equality.Semantic.DeepDerivative(desired.Annotations, existing.Annotations) {
+		return false
+	}
+	// DeepDerivative treats missing fields as matching, so a single unweighted
+	// backend is seen as a subset of two weighted backends. Compare backend ref
+	// counts explicitly to detect canary addition/removal.
+	if len(desired.Spec.Rules) != len(existing.Spec.Rules) {
+		return false
+	}
+	for i := range desired.Spec.Rules {
+		if len(desired.Spec.Rules[i].BackendRefs) != len(existing.Spec.Rules[i].BackendRefs) {
+			return false
+		}
+	}
+	return equality.Semantic.DeepDerivative(desired.Spec, existing.Spec)
 }
 
 // isHTTPRouteReady checks if the HTTPRoute is ready. If not, returns the reason and message.
@@ -519,7 +781,7 @@ func isHTTPRouteReady(httpRouteStatus gwapiv1.HTTPRouteStatus) (bool, *string, *
 }
 
 func (r *RawHTTPRouteReconciler) reconcilePredictorHTTPRoute(ctx context.Context, isvc *v1beta1.InferenceService) error {
-	desired, err := createRawPredictorHTTPRoute(isvc, r.ingressConfig, r.isvcConfig)
+	desired, err := createRawPredictorHTTPRoute(ctx, r.client, isvc, r.ingressConfig, r.isvcConfig)
 	if err != nil {
 		return err
 	}
@@ -582,7 +844,7 @@ func (r *RawHTTPRouteReconciler) reconcilePredictorHTTPRoute(ctx context.Context
 }
 
 func (r *RawHTTPRouteReconciler) reconcileTransformerHTTPRoute(ctx context.Context, isvc *v1beta1.InferenceService) error {
-	desired, err := createRawTransformerHTTPRoute(isvc, r.ingressConfig, r.isvcConfig)
+	desired, err := createRawTransformerHTTPRoute(ctx, r.client, isvc, r.ingressConfig, r.isvcConfig)
 	if err != nil {
 		return err
 	}
@@ -642,7 +904,7 @@ func (r *RawHTTPRouteReconciler) reconcileTransformerHTTPRoute(ctx context.Conte
 }
 
 func (r *RawHTTPRouteReconciler) reconcileExplainerHTTPRoute(ctx context.Context, isvc *v1beta1.InferenceService) error {
-	desired, err := createRawExplainerHTTPRoute(isvc, r.ingressConfig, r.isvcConfig)
+	desired, err := createRawExplainerHTTPRoute(ctx, r.client, isvc, r.ingressConfig, r.isvcConfig)
 	if err != nil {
 		return err
 	}
@@ -702,7 +964,7 @@ func (r *RawHTTPRouteReconciler) reconcileExplainerHTTPRoute(ctx context.Context
 }
 
 func (r *RawHTTPRouteReconciler) reconcileTopLevelHTTPRoute(ctx context.Context, isvc *v1beta1.InferenceService) error {
-	desired, err := createRawTopLevelHTTPRoute(isvc, r.ingressConfig, r.isvcConfig)
+	desired, err := createRawTopLevelHTTPRoute(ctx, r.client, isvc, r.ingressConfig, r.isvcConfig)
 	if err != nil {
 		return err
 	}
@@ -817,7 +1079,7 @@ func (r *RawHTTPRouteReconciler) reconcileHTTPRouteStatus(ctx context.Context, i
 					Reason:  check.component + " Deployment NotReady",
 					Message: check.component + " HTTPRoute not created",
 				})
-				return ctrl.Result{Requeue: true}, nil
+				return ctrl.Result{RequeueAfter: time.Second}, nil
 			}
 			// Return any other errors
 			return ctrl.Result{}, err
@@ -832,7 +1094,7 @@ func (r *RawHTTPRouteReconciler) reconcileHTTPRouteStatus(ctx context.Context, i
 				Reason:  *reason,
 				Message: fmt.Sprintf("%s %s", check.component, *message),
 			})
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 	}
 
@@ -884,7 +1146,7 @@ func (r *RawHTTPRouteReconciler) Reconcile(ctx context.Context, isvc *v1beta1.In
 		}
 
 		// Check HTTPRoute statuses for all components
-		if result, err := r.reconcileHTTPRouteStatus(ctx, isvc); err != nil || result.Requeue {
+		if result, err := r.reconcileHTTPRouteStatus(ctx, isvc); err != nil || result.RequeueAfter > 0 {
 			return result, err
 		}
 	} else {

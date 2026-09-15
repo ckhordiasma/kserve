@@ -19,6 +19,8 @@ package v1alpha2
 import (
 	"k8s.io/utils/ptr"
 	"knative.dev/pkg/kmeta"
+
+	kservevalidation "github.com/kserve/kserve/pkg/validation"
 )
 
 func (s *SchedulerSpec) InferencePoolName(llmSvc *LLMInferenceService) string {
@@ -36,6 +38,24 @@ func (r *RouterSpec) EPPServiceName(llmSvc *LLMInferenceService) string {
 		return string(r.Scheduler.Pool.Spec.EndpointPickerRef.Name)
 	}
 	return kmeta.ChildName(llmSvc.GetName(), "-epp-service")
+}
+
+func (r *RouterSpec) HasGroup() bool {
+	return r != nil && r.Route != nil && r.Route.Group != nil
+}
+
+func (r *RouterSpec) Group() *string {
+	if r == nil || r.Route == nil {
+		return nil
+	}
+	return r.Route.Group
+}
+
+func (r *RouterSpec) Weight() *int32 {
+	if r == nil || r.Route == nil {
+		return nil
+	}
+	return r.Route.Weight
 }
 
 func (in *GatewaySpec) HasRefs() bool {
@@ -92,9 +112,32 @@ func (p *ParallelismSpec) GetSize() *int32 {
 	return nil
 }
 
-// IsUsingLLMInferenceServiceConfig returns true if the given config name is referenced by this service,
-// either via versioned config resolution (pinned in Status.Annotations values) or via explicit Spec.BaseRefs.
+// IsUsingLLMInferenceServiceConfig returns true if the given config name is referenced by this service.
+// This is a name-only helper and should be preferred only when namespace context is unavailable.
 func (s *LLMInferenceService) IsUsingLLMInferenceServiceConfig(name string) bool {
+	return s.IsUsingLLMInferenceServiceConfigInNamespace(name, "")
+}
+
+// IsUsingLLMInferenceServiceConfigInNamespace returns true if the given config is referenced by this service.
+// When status.appliedConfigs is present, it is treated as authoritative.
+// Annotation/baseRefs fallback is used when appliedConfigs is empty (new service, or stopped service
+// whose applied configs were cleared).
+func (s *LLMInferenceService) IsUsingLLMInferenceServiceConfigInNamespace(name, namespace string) bool {
+	// Use applied configs from the last successful reconciliation when available.
+	if len(s.Status.AppliedConfigRefs) > 0 {
+		for i := range s.Status.AppliedConfigRefs {
+			if string(s.Status.AppliedConfigRefs[i].Name) != name {
+				continue
+			}
+
+			if namespace == "" || string(s.Status.AppliedConfigRefs[i].Namespace) == namespace {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Fallback: appliedConfigs is empty (not yet reconciled, or cleared on stop).
 	for _, value := range s.Status.Annotations {
 		if value == name {
 			return true
@@ -108,4 +151,47 @@ func (s *LLMInferenceService) IsUsingLLMInferenceServiceConfig(name string) bool
 	}
 
 	return false
+}
+
+// HasManagedDRA reports whether managed DRA is enabled via annotations.
+func (s *LLMInferenceService) HasManagedDRA() bool {
+	if s == nil {
+		return false
+	}
+	return kservevalidation.HasManagedDRA(s.Annotations)
+}
+
+// ManagedDRADeviceClass returns the trimmed device-class annotation value and
+// whether it is set.
+func (s *LLMInferenceService) ManagedDRADeviceClass() (string, bool) {
+	if s == nil {
+		return "", false
+	}
+	return kservevalidation.ManagedDRADeviceClass(s.Annotations)
+}
+
+// ManagedDRADeviceCount returns the requested device count, defaulting to 1.
+func (s *LLMInferenceService) ManagedDRADeviceCount() (int, error) {
+	if s == nil {
+		return 1, nil
+	}
+	return kservevalidation.ManagedDRADeviceCount(s.Annotations)
+}
+
+// ManagedDRACelSelectors returns the newline-separated CEL expressions, with
+// empty lines and surrounding whitespace stripped.
+func (s *LLMInferenceService) ManagedDRACelSelectors() []string {
+	if s == nil {
+		return nil
+	}
+	return kservevalidation.ManagedDRACelSelectors(s.Annotations)
+}
+
+// ManagedDRAContainerName returns the trimmed container-name annotation value
+// and whether it is set.
+func (s *LLMInferenceService) ManagedDRAContainerName() (string, bool) {
+	if s == nil {
+		return "", false
+	}
+	return kservevalidation.ManagedDRAContainerName(s.Annotations)
 }
